@@ -1,0 +1,8 @@
+{
+  "extraKnownMarketplaces": {
+    "trek-plugin-skill": {
+      "source": { "source": "github", "repo": "fbnlrz/trek-plugin-skill" }
+    }
+  },
+  "enabledPlugins": ["trek-plugin-dev@trek-plugin-skill"]
+}
