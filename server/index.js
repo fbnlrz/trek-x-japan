@@ -1,18 +1,21 @@
 // TREK × Japan — server entry (type: trip-page, TREK >= 3.2.1).
 // Built CommonJS, runs in an isolated child process; all host access via `ctx`.
 //
-// Collaboration model: this is a trip-scoped page, so `tripId` is always known
-// (the client reads it from trek:context and passes it on every call). Trip
-// planning data — checklist, budget, expenses, food tally, prefecture passport,
-// collections and the weather location — is stored per TRIP and SHARED by all
-// trip members; every trip-scoped route membership-checks the acting user with
-// `ctx.trips.getById(tripId, userId)` before reading or writing. Genuinely
-// personal things — IC-card balance, phrase favourites, display currency — stay
-// keyed per USER.
+// This build exercises the full TREK 3.2.1 plugin surface:
+//  - trip-scoped, collaborative own-DB data (db:own) shared by trip members
+//  - db:read:trips / db:read:users  (membership gate + collaborator names)
+//  - db:read:packing / db:read:files  (native packing list + trip documents)
+//  - db:read:costs / db:write:costs  (native budget items; requiredAddons: budget)
+//  - db:write:trips / places / days / itinerary  (write into the trip planner)
+//  - db:meta  (plugin-private KV on trip/place/day entities)
+//  - events:subscribe  (react to core trip events -> live activity feed)
+//  - hook:place-detail-provider + hook:trip-warning-provider  (enrich core UI)
+//  - ws:broadcast:trip / ws:broadcast:user  (notify core clients on changes)
+//  - http:outbound to open-meteo / er-api / jma  (weather, FX, quakes)
 const { definePlugin } = require('trek-plugin-sdk');
 
 // ---------------------------------------------------------------------------
-// Bundled datasets (shipped inside server/ — required at load, read-only).
+// Bundled datasets
 // ---------------------------------------------------------------------------
 const PHRASES = require('./data/nihongo-phrases.json');
 const PREFECTURES = require('./data/prefectures.json');
@@ -41,17 +44,11 @@ const CHECKLIST_ITEMS = [
 ];
 
 const EMERGENCY_PHRASE_CATEGORY = 'emergency';
-
 const USER_PREF_KEYS = ['home_currency', 'low_ic_threshold', 'ic_card'];
 const USER_PREF_DEFAULTS = { home_currency: 'EUR', low_ic_threshold: '1000' };
 const TRIP_PREF_KEYS = ['weather_lat', 'weather_lon', 'weather_city'];
-
 const CURRENCY_SYMBOL = { EUR: '€', USD: '$', GBP: '£', CHF: 'Fr.' };
-
-const FX_TTL = 6 * 60 * 60 * 1000;
-const WEATHER_TTL = 30 * 60 * 1000;
-const QUAKE_TTL = 15 * 60 * 1000;
-const FETCH_TIMEOUT = 8000;
+const FX_TTL = 6 * 60 * 60 * 1000, WEATHER_TTL = 30 * 60 * 1000, QUAKE_TTL = 15 * 60 * 1000, FETCH_TIMEOUT = 8000;
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -62,25 +59,26 @@ function json(status, obj, cacheControl) {
   return { status, headers, body: JSON.stringify(obj) };
 }
 function nowIso() { return new Date().toISOString(); }
-function toNum(v, fallback) { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : fallback; }
-function requireUser(req) {
-  const id = req.user && req.user.id;
-  if (id == null) { const e = new Error('no user'); e.status = 401; throw e; }
-  return id;
-}
-async function readBody(req) {
-  let b = req.body;
-  if (typeof b === 'string') { try { b = JSON.parse(b); } catch (_) { b = {}; } }
-  return b && typeof b === 'object' ? b : {};
-}
-function getTripIdFromQuery(req) {
-  const raw = req.query && (req.query.tripId != null ? req.query.tripId : req.query.trip_id);
-  return toNum(raw, null);
+function toNum(v, fb) { const n = typeof v === 'number' ? v : parseFloat(v); return Number.isFinite(n) ? n : fb; }
+function requireUser(req) { const id = req.user && req.user.id; if (id == null) { const e = new Error('no user'); e.status = 401; throw e; } return id; }
+async function readBody(req) { let b = req.body; if (typeof b === 'string') { try { b = JSON.parse(b); } catch (_) { b = {}; } } return b && typeof b === 'object' ? b : {}; }
+function getTripIdFromQuery(req) { const raw = req.query && (req.query.tripId != null ? req.query.tripId : req.query.trip_id); return toNum(raw, null); }
+
+// Run a ctx.* call that may fail on missing addon / edit-permission / feature —
+// or on a host that doesn't provide the namespace at all (`ctx.meta` undefined).
+// Takes a THUNK so a synchronous access throw (undefined method) is caught too.
+async function attempt(thunk) { try { return { ok: true, value: await thunk() }; } catch (e) { return { ok: false, error: String(e && e.message || e) }; } }
+
+async function safeBroadcastTrip(ctx, tripId, event, data) { try { await ctx.ws.broadcastToTrip(tripId, event, data); } catch (_) {} }
+async function safeBroadcastUser(ctx, userId, event, data) { try { await ctx.ws.broadcastToUser(userId, event, data); } catch (_) {} }
+
+async function upsertTripCache(ctx, tripId, trip) {
+  const t = tripDates(trip);
+  await ctx.db.exec('INSERT INTO trip_cache(trip_id, title, start, end, updated_at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(trip_id) DO UPDATE SET title=excluded.title, start=excluded.start, end=excluded.end, updated_at=excluded.updated_at',
+    tripId, t.title || null, t.start || null, t.end || null, nowIso());
 }
 
-// Membership gate for every SHARED, trip-scoped route. Returns the trip so the
-// handler can also use its dates/title; throws 403 if the acting user is not a
-// member (ctx.trips is membership-checked by the host).
+// Membership gate for shared, trip-scoped routes.
 async function requireTrip(req, ctx, bodyTripId) {
   const userId = requireUser(req);
   const tripId = bodyTripId != null ? toNum(bodyTripId, null) : getTripIdFromQuery(req);
@@ -89,26 +87,14 @@ async function requireTrip(req, ctx, bodyTripId) {
   try { trip = await ctx.trips.getById(tripId, userId); }
   catch (e) { const err = new Error('not a member of this trip'); err.status = 403; throw err; }
   if (!trip) { const err = new Error('trip not found'); err.status = 404; throw err; }
+  await upsertTripCache(ctx, tripId, trip);
   return { userId, tripId, trip };
 }
 
 // cache
-async function cacheGet(ctx, key) {
-  const rows = await ctx.db.query('SELECT json, fetched_at FROM cache WHERE key = ?', key);
-  if (!rows.length) return null;
-  let parsed = null; try { parsed = JSON.parse(rows[0].json); } catch (_) {}
-  return { data: parsed, fetched_at: rows[0].fetched_at };
-}
-async function cacheSet(ctx, key, data) {
-  const at = nowIso();
-  await ctx.db.exec('INSERT INTO cache(key, json, fetched_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET json = excluded.json, fetched_at = excluded.fetched_at', key, JSON.stringify(data), at);
-  return at;
-}
-function isStale(entry, ttl) {
-  if (!entry || !entry.fetched_at) return true;
-  const t = Date.parse(entry.fetched_at);
-  return !Number.isFinite(t) || (Date.now() - t) > ttl;
-}
+async function cacheGet(ctx, key) { const rows = await ctx.db.query('SELECT json, fetched_at FROM cache WHERE key = ?', key); if (!rows.length) return null; let p = null; try { p = JSON.parse(rows[0].json); } catch (_) {} return { data: p, fetched_at: rows[0].fetched_at }; }
+async function cacheSet(ctx, key, data) { const at = nowIso(); await ctx.db.exec('INSERT INTO cache(key, json, fetched_at) VALUES(?, ?, ?) ON CONFLICT(key) DO UPDATE SET json=excluded.json, fetched_at=excluded.fetched_at', key, JSON.stringify(data), at); return at; }
+function isStale(e, ttl) { if (!e || !e.fetched_at) return true; const t = Date.parse(e.fetched_at); return !Number.isFinite(t) || (Date.now() - t) > ttl; }
 
 // prefs
 async function loadUserPrefs(ctx, userId) {
@@ -118,95 +104,51 @@ async function loadUserPrefs(ctx, userId) {
   for (const r of rows) if (USER_PREF_KEYS.includes(r.key)) out[r.key] = r.value;
   return out;
 }
-async function saveUserPref(ctx, userId, key, value) {
-  await ctx.db.exec('INSERT INTO user_prefs(user_id, key, value) VALUES(?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value', userId, key, value == null ? '' : String(value));
-}
-async function loadTripPrefs(ctx, tripId) {
-  const out = {};
-  const rows = await ctx.db.query('SELECT key, value FROM trip_prefs WHERE trip_id = ?', tripId);
-  for (const r of rows) if (TRIP_PREF_KEYS.includes(r.key)) out[r.key] = r.value;
-  return out;
-}
-async function saveTripPref(ctx, tripId, key, value) {
-  await ctx.db.exec('INSERT INTO trip_prefs(trip_id, key, value) VALUES(?, ?, ?) ON CONFLICT(trip_id, key) DO UPDATE SET value = excluded.value', tripId, key, value == null ? '' : String(value));
-}
+async function saveUserPref(ctx, userId, key, value) { await ctx.db.exec('INSERT INTO user_prefs(user_id, key, value) VALUES(?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value', userId, key, value == null ? '' : String(value)); }
+async function loadTripPrefs(ctx, tripId) { const out = {}; const rows = await ctx.db.query('SELECT key, value FROM trip_prefs WHERE trip_id = ?', tripId); for (const r of rows) if (TRIP_PREF_KEYS.includes(r.key)) out[r.key] = r.value; return out; }
+async function saveTripPref(ctx, tripId, key, value) { await ctx.db.exec('INSERT INTO trip_prefs(trip_id, key, value) VALUES(?, ?, ?) ON CONFLICT(trip_id, key) DO UPDATE SET value=excluded.value', tripId, key, value == null ? '' : String(value)); }
 
-// Resolve user ids -> display names (co-members only; best-effort).
 async function resolveNames(ctx, ids) {
   const uniq = Array.from(new Set(ids.filter(function (x) { return x != null; })));
   const map = {};
-  for (const id of uniq) {
-    try {
-      const u = await ctx.users.getById(id);
-      if (u) map[id] = u.display_name || u.username || ('#' + id);
-      else map[id] = '#' + id;
-    } catch (_) { map[id] = '#' + id; }
-  }
+  for (const id of uniq) { try { const u = await ctx.users.getById(id); map[id] = u ? (u.display_name || u.username || ('#' + id)) : ('#' + id); } catch (_) { map[id] = '#' + id; } }
   return map;
 }
-
-function coords(tripPrefs) {
-  const lat = toNum(tripPrefs.weather_lat, null);
-  const lon = toNum(tripPrefs.weather_lon, null);
-  if (lat != null && lon != null) return { lat, lon };
-  return null;
-}
+function coords(tp) { const lat = toNum(tp.weather_lat, null), lon = toNum(tp.weather_lon, null); return (lat != null && lon != null) ? { lat, lon } : null; }
 
 // remote refreshers
-async function timedFetch(url) {
-  const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } });
-  if (!res.ok) throw new Error('http ' + res.status);
-  return res.json();
-}
-async function refreshFx(ctx) {
-  const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY');
-  const rates = (raw && raw.rates) || {};
-  const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) };
-  return { data, fetched_at: await cacheSet(ctx, 'fx', data) };
-}
-async function refreshWeather(ctx, lat, lon, cacheKey) {
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon)
-    + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m'
-    + '&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
+async function timedFetch(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('http ' + res.status); return res.json(); }
+async function refreshFx(ctx) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); const rates = (raw && raw.rates) || {}; const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) }; return { data, fetched_at: await cacheSet(ctx, 'fx', data) }; }
+async function refreshWeather(ctx, lat, lon, key) {
+  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
   const raw = await timedFetch(url);
-  const data = {
-    lat, lon,
-    current: raw && raw.current ? { temp: raw.current.temperature_2m, humidity: raw.current.relative_humidity_2m, code: raw.current.weather_code, wind: raw.current.wind_speed_10m } : null,
-    daily: raw && raw.daily && Array.isArray(raw.daily.time) ? raw.daily.time.map(function (d, i) {
-      return { date: d, code: raw.daily.weather_code[i], tmax: raw.daily.temperature_2m_max[i], tmin: raw.daily.temperature_2m_min[i], pop: raw.daily.precipitation_probability_max ? raw.daily.precipitation_probability_max[i] : null };
-    }) : [],
-  };
-  return { data, fetched_at: await cacheSet(ctx, cacheKey || 'weather', data) };
+  const data = { lat, lon, current: raw && raw.current ? { temp: raw.current.temperature_2m, humidity: raw.current.relative_humidity_2m, code: raw.current.weather_code, wind: raw.current.wind_speed_10m } : null, daily: raw && raw.daily && Array.isArray(raw.daily.time) ? raw.daily.time.map(function (d, i) { return { date: d, code: raw.daily.weather_code[i], tmax: raw.daily.temperature_2m_max[i], tmin: raw.daily.temperature_2m_min[i], pop: raw.daily.precipitation_probability_max ? raw.daily.precipitation_probability_max[i] : null }; }) : [] };
+  return { data, fetched_at: await cacheSet(ctx, key || 'weather', data) };
 }
-async function refreshQuake(ctx) {
-  const raw = await timedFetch('https://www.jma.go.jp/bosai/quake/data/list.json');
-  const list = Array.isArray(raw) ? raw.slice(0, 12) : [];
-  const data = { items: list.map(function (q) { return { time: q.at || q.rdt || null, place: q.anm || q.en_anm || '', mag: q.mag != null ? q.mag : null, intensity: q.maxi || null }; }) };
-  return { data, fetched_at: await cacheSet(ctx, 'quake', data) };
-}
+async function refreshQuake(ctx) { const raw = await timedFetch('https://www.jma.go.jp/bosai/quake/data/list.json'); const list = Array.isArray(raw) ? raw.slice(0, 12) : []; const data = { items: list.map(function (q) { return { time: q.at || q.rdt || null, place: q.anm || q.en_anm || '', mag: q.mag != null ? q.mag : null, intensity: q.maxi || null }; }) }; return { data, fetched_at: await cacheSet(ctx, 'quake', data) }; }
 
 // dates
-function dayOfYear(d) { const start = Date.UTC(d.getUTCFullYear(), 0, 0); return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - start) / 86400000); }
-function daysUntil(iso) {
-  if (!iso) return null;
-  const t = Date.parse(iso); if (!Number.isFinite(t)) return null;
-  const today = new Date();
-  return Math.round((t - Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate())) / 86400000);
-}
-function tripDates(trip) {
-  return { title: trip.title || trip.name || null, start: trip.start_date || trip.startDate || null, end: trip.end_date || trip.endDate || null };
-}
-function tripMonths(start, end) {
-  if (!start) return null;
-  const s = new Date(start); if (isNaN(s.getTime())) return null;
-  const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e;
-  const months = new Set(); let y = s.getUTCFullYear(), m = s.getUTCMonth();
-  const ey = ed.getUTCFullYear(), em = ed.getUTCMonth(); let guard = 0;
-  while ((y < ey || (y === ey && m <= em)) && guard < 24) { months.add(m + 1); m++; if (m > 11) { m = 0; y++; } guard++; }
-  return Array.from(months);
+function dayOfYear(d) { const s = Date.UTC(d.getUTCFullYear(), 0, 0); return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - s) / 86400000); }
+function daysUntil(iso) { if (!iso) return null; const t = Date.parse(iso); if (!Number.isFinite(t)) return null; const td = new Date(); return Math.round((t - Date.UTC(td.getUTCFullYear(), td.getUTCMonth(), td.getUTCDate())) / 86400000); }
+function tripDates(trip) { return { title: trip.title || trip.name || null, start: trip.start_date || trip.startDate || null, end: trip.end_date || trip.endDate || null }; }
+function tripMonths(start, end) { if (!start) return null; const s = new Date(start); if (isNaN(s.getTime())) return null; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e; const m = new Set(); let y = s.getUTCFullYear(), mo = s.getUTCMonth(); const ey = ed.getUTCFullYear(), em = ed.getUTCMonth(); let g = 0; while ((y < ey || (y === ey && mo <= em)) && g < 24) { m.add(mo + 1); mo++; if (mo > 11) { mo = 0; y++; } g++; } return Array.from(m); }
+// Does [start,end] overlap the MM-DD..MM-DD window in any spanned year?
+function overlapsSeason(start, end, fromMD, toMD) {
+  if (!start) return false; const s = new Date(start); if (isNaN(s.getTime())) return false; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e;
+  for (let y = s.getUTCFullYear(); y <= ed.getUTCFullYear(); y++) {
+    const a = Date.parse(y + '-' + fromMD + 'T00:00:00Z'), b = Date.parse(y + '-' + toMD + 'T23:59:59Z');
+    if (Number.isFinite(a) && Number.isFinite(b) && ed.getTime() >= a && s.getTime() <= b) return true;
+  }
+  return false;
 }
 
-// shared IC adjust (personal)
+async function logActivity(ctx, tripId, event) {
+  await ctx.db.exec('INSERT INTO activity(trip_id, event, at) VALUES(?, ?, ?)', tripId, event, nowIso());
+  // keep only the most recent 200 per trip
+  await ctx.db.exec('DELETE FROM activity WHERE trip_id = ? AND id NOT IN (SELECT id FROM activity WHERE trip_id = ? ORDER BY id DESC LIMIT 200)', tripId, tripId);
+}
+
+// personal IC adjust
 async function icAdjust(req, ctx, kind) {
   const userId = requireUser(req);
   const body = await readBody(req);
@@ -216,30 +158,25 @@ async function icAdjust(req, ctx, kind) {
   const cur = b.length ? b[0].yen : 0;
   const next = kind === 'charge' ? cur + amount : Math.max(0, cur - amount);
   const at = nowIso();
-  await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen = excluded.yen, updated_at = excluded.updated_at', userId, next, at);
+  await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, next, at);
   await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, kind, amount, next, at);
+  await safeBroadcastUser(ctx, userId, 'ic:changed', { yen: next });
   return json(200, { yen: next, kind, amount });
 }
 
-// Wrap a route handler so thrown guard errors (requireUser/requireTrip) become
-// clean HTTP responses instead of a PLUGIN_ERROR/502.
 function wrapHandler(fn) {
   return async function (req, ctx) {
     try { return await fn(req, ctx); }
-    catch (e) {
-      const status = e && e.status ? e.status : 500;
-      if (status >= 500) ctx.log.error('route error', { path: req.path, msg: String(e && e.message) });
-      return json(status, { error: (e && e.message) || 'error' });
-    }
+    catch (e) { const status = e && e.status ? e.status : 500; if (status >= 500) ctx.log.error('route error', { path: req.path, msg: String(e && e.message) }); return json(status, { error: (e && e.message) || 'error' }); }
   };
 }
 
 // ---------------------------------------------------------------------------
-// Plugin
+// Definition
 // ---------------------------------------------------------------------------
 const PLUGIN = {
   async onLoad(ctx) {
-    // Trip-scoped (shared) tables
+    // shared, per-trip
     await ctx.db.migrate('t001_checklist', 'CREATE TABLE IF NOT EXISTS checklist (trip_id INTEGER NOT NULL, item_id TEXT NOT NULL, done INTEGER NOT NULL DEFAULT 0, by_user INTEGER, at TEXT, PRIMARY KEY(trip_id, item_id))');
     await ctx.db.migrate('t002_budget', 'CREATE TABLE IF NOT EXISTS budget (trip_id INTEGER PRIMARY KEY, planned_yen INTEGER NOT NULL DEFAULT 0)');
     await ctx.db.migrate('t003_spend', 'CREATE TABLE IF NOT EXISTS spend (id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL, user_id INTEGER NOT NULL, amount_yen INTEGER NOT NULL, note TEXT, at TEXT)');
@@ -247,21 +184,75 @@ const PLUGIN = {
     await ctx.db.migrate('t005_visited', 'CREATE TABLE IF NOT EXISTS visited_prefs (trip_id INTEGER NOT NULL, code TEXT NOT NULL, by_user INTEGER, at TEXT, PRIMARY KEY(trip_id, code))');
     await ctx.db.migrate('t006_collect', 'CREATE TABLE IF NOT EXISTS collect (trip_id INTEGER NOT NULL, kind TEXT NOT NULL, key TEXT NOT NULL, by_user INTEGER, at TEXT, PRIMARY KEY(trip_id, kind, key))');
     await ctx.db.migrate('t007_trip_prefs', 'CREATE TABLE IF NOT EXISTS trip_prefs (trip_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(trip_id, key))');
-    // User-scoped (personal) tables
+    await ctx.db.migrate('t008_trip_cache', 'CREATE TABLE IF NOT EXISTS trip_cache (trip_id INTEGER PRIMARY KEY, title TEXT, start TEXT, end TEXT, updated_at TEXT)');
+    await ctx.db.migrate('t009_activity', 'CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL, event TEXT, at TEXT)');
+    await ctx.db.migrate('t010_place_notes', 'CREATE TABLE IF NOT EXISTS place_notes (place_id INTEGER PRIMARY KEY, trip_id INTEGER, note TEXT, by_user INTEGER, at TEXT)');
+    await ctx.db.migrate('t011_cost_sync', 'CREATE TABLE IF NOT EXISTS cost_sync (spend_id INTEGER PRIMARY KEY, cost_id INTEGER, at TEXT)');
+    // personal, per-user
     await ctx.db.migrate('u001_user_prefs', 'CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(user_id, key))');
     await ctx.db.migrate('u002_phrase_favs', 'CREATE TABLE IF NOT EXISTS phrase_favs (user_id INTEGER NOT NULL, phrase_id TEXT NOT NULL, at TEXT, PRIMARY KEY(user_id, phrase_id))');
     await ctx.db.migrate('u003_phrase_state', 'CREATE TABLE IF NOT EXISTS phrase_state (user_id INTEGER PRIMARY KEY, offset INTEGER NOT NULL DEFAULT 0)');
     await ctx.db.migrate('u004_ic_balance', 'CREATE TABLE IF NOT EXISTS ic_balance (user_id INTEGER PRIMARY KEY, yen INTEGER NOT NULL DEFAULT 0, updated_at TEXT)');
     await ctx.db.migrate('u005_ic_ledger', 'CREATE TABLE IF NOT EXISTS ic_ledger (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, balance_after INTEGER NOT NULL, at TEXT)');
-    // Global cache
     await ctx.db.migrate('g001_cache', 'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, json TEXT, fetched_at TEXT)');
-    ctx.log.info('TREK x Japan (trip-page) loaded');
+    ctx.log.info('TREK x Japan (trip-page, 3.2.1) loaded');
   },
 
   async onUnload(ctx) { ctx.log.info('TREK x Japan unloading'); },
 
-  // Declared for completeness; TREK has no cron runner (routes refresh caches
-  // on demand with a staleness guard).
+  // (≥3.2.1) WIRED reactive hook. No user, only { event, tripId }. We keep a
+  // per-trip activity feed the UI polls via GET /activity.
+  events: [
+    { on: '*', async handler(payload, ctx) {
+      try {
+        const tripId = toNum(payload && payload.tripId, null);
+        if (tripId == null) return;
+        await logActivity(ctx, tripId, String(payload.event || 'event'));
+      } catch (e) { ctx.log.warn('event handler', { msg: String(e && e.message) }); }
+    } },
+  ],
+
+  // (≥3.2.1) WIRED provider hooks. Called by core with the plugin ctx (no user),
+  // additive and fail-safe.
+  hooks: {
+    // Enrich a place's detail panel with any note this plugin pinned to it.
+    placeDetailProvider: {
+      async getDetails(placeId, ctx) {
+        const out = [];
+        try {
+          const rows = await ctx.db.query('SELECT note FROM place_notes WHERE place_id = ?', toNum(placeId, -1));
+          if (rows.length && rows[0].note) out.push({ label: 'TREK × Japan', value: rows[0].note });
+        } catch (_) {}
+        return out;
+      },
+    },
+    // Raise trip-planner warnings from the plugin's own trip state.
+    warningProvider: {
+      async getWarnings(tripId, ctx) {
+        const out = [];
+        const id = toNum(tripId, null); if (id == null) return out;
+        try {
+          const tp = {}; const pr = await ctx.db.query('SELECT key, value FROM trip_prefs WHERE trip_id = ?', id);
+          pr.forEach(function (r) { tp[r.key] = r.value; });
+          if (!(tp.weather_lat && tp.weather_lon)) out.push({ level: 'info', message: 'TREK × Japan: set a weather location to see the forecast & typhoon risk.' });
+          const b = await ctx.db.query('SELECT planned_yen FROM budget WHERE trip_id = ?', id);
+          const planned = b.length ? b[0].planned_yen : 0;
+          const sp = await ctx.db.query('SELECT COALESCE(SUM(amount_yen),0) AS s FROM spend WHERE trip_id = ?', id);
+          const spent = sp.length ? sp[0].s : 0;
+          if (planned > 0 && spent > planned) out.push({ level: 'warning', message: 'TREK × Japan: trip budget exceeded (¥' + spent.toLocaleString('en-US') + ' of ¥' + planned.toLocaleString('en-US') + ').' });
+          const tc = await ctx.db.query('SELECT start, end FROM trip_cache WHERE trip_id = ?', id);
+          if (tc.length) {
+            const s = tc[0].start, e = tc[0].end;
+            if (overlapsSeason(s, e, '04-29', '05-06')) out.push({ level: 'info', message: 'TREK × Japan: your dates hit Golden Week — book transport & lodging early, expect crowds.' });
+            if (overlapsSeason(s, e, '12-28', '01-04')) out.push({ level: 'info', message: 'TREK × Japan: New Year (o-shogatsu) — many shops and sights close; plan around it.' });
+            if (overlapsSeason(s, e, '08-10', '08-17')) out.push({ level: 'info', message: 'TREK × Japan: Obon week — domestic travel peaks and prices rise.' });
+          }
+        } catch (e) { ctx.log.warn('warnings', { msg: String(e && e.message) }); }
+        return out;
+      },
+    },
+  },
+
   jobs: [
     { id: 'fx-refresh', schedule: '0 */6 * * *', async handler(ctx) { try { await refreshFx(ctx); } catch (e) { ctx.log.error('fx job', { msg: String(e && e.message) }); } } },
     { id: 'quake-refresh', schedule: '*/15 * * * *', async handler(ctx) { try { await refreshQuake(ctx); } catch (e) { ctx.log.error('quake job', { msg: String(e && e.message) }); } } },
@@ -270,20 +261,19 @@ const PLUGIN = {
   routes: [
     // ---- meta + prefs -------------------------------------------------------
     { method: 'GET', path: '/meta', auth: true, async handler(req, ctx) {
-      const { userId, trip } = await requireTrip(req, ctx);
+      const { userId, tripId, trip } = await requireTrip(req, ctx);
       const td = tripDates(trip);
       const prefs = await loadUserPrefs(ctx, userId);
+      const pin = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips'));
       return json(200, {
         me: { id: userId, name: (req.user && req.user.username) || null },
-        trip: { title: td.title, start: td.start, end: td.end, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
+        trip: { title: td.title, start: td.start, end: td.end, currency: trip.currency || null, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
         prefs, currency_symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency,
+        pinned_tips: pin.ok ? (pin.value || null) : null,
         counts: { phrases: PHRASES.length, prefectures: PREFECTURES.length, etiquette: ETIQUETTE.length, gomi: GOMI.length, matsuri: MATSURI.length, sakura: SAKURA.length, checklist: CHECKLIST_ITEMS.length },
       });
     } },
-    { method: 'GET', path: '/prefs', auth: true, async handler(req, ctx) {
-      const { userId, tripId } = await requireTrip(req, ctx);
-      return json(200, { prefs: await loadUserPrefs(ctx, userId), trip_prefs: await loadTripPrefs(ctx, tripId) });
-    } },
+    { method: 'GET', path: '/prefs', auth: true, async handler(req, ctx) { const { userId, tripId } = await requireTrip(req, ctx); return json(200, { prefs: await loadUserPrefs(ctx, userId), trip_prefs: await loadTripPrefs(ctx, tripId) }); } },
     { method: 'POST', path: '/prefs', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
       const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
@@ -301,14 +291,8 @@ const PLUGIN = {
       const rows = await ctx.db.query('SELECT item_id, done, by_user, at FROM checklist WHERE trip_id = ?', tripId);
       const map = {}; rows.forEach(function (r) { map[r.item_id] = r; });
       const names = await resolveNames(ctx, rows.map(function (r) { return r.by_user; }));
-      const items = CHECKLIST_ITEMS.map(function (it) {
-        const r = map[it.id];
-        return { id: it.id, en: it.en, de: it.de, group: it.group, done: !!(r && r.done), by: r && r.done ? (names[r.by_user] || null) : null };
-      });
-      return json(200, {
-        trip: { title: td.title, start: td.start, end: td.end, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
-        items, done: items.filter(function (i) { return i.done; }).length, total: items.length,
-      });
+      const items = CHECKLIST_ITEMS.map(function (it) { const r = map[it.id]; return { id: it.id, en: it.en, de: it.de, group: it.group, done: !!(r && r.done), by: r && r.done ? (names[r.by_user] || null) : null }; });
+      return json(200, { trip: { title: td.title, start: td.start, end: td.end, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) }, items, done: items.filter(function (i) { return i.done; }).length, total: items.length });
     } },
     { method: 'POST', path: '/checklist/toggle', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
@@ -317,8 +301,32 @@ const PLUGIN = {
       if (!CHECKLIST_ITEMS.some(function (i) { return i.id === itemId; })) return json(400, { error: 'unknown item' });
       const cur = await ctx.db.query('SELECT done FROM checklist WHERE trip_id = ? AND item_id = ?', tripId, itemId);
       const next = cur.length && cur[0].done ? 0 : 1;
-      await ctx.db.exec('INSERT INTO checklist(trip_id, item_id, done, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(trip_id, item_id) DO UPDATE SET done = excluded.done, by_user = excluded.by_user, at = excluded.at', tripId, itemId, next, userId, nowIso());
+      await ctx.db.exec('INSERT INTO checklist(trip_id, item_id, done, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(trip_id, item_id) DO UPDATE SET done=excluded.done, by_user=excluded.by_user, at=excluded.at', tripId, itemId, next, userId, nowIso());
+      await safeBroadcastTrip(ctx, tripId, 'checklist:changed', { item_id: itemId, done: !!next });
       return json(200, { item_id: itemId, done: !!next });
+    } },
+
+    // Native TREK packing list (db:read:packing) + trip files (db:read:files)
+    { method: 'GET', path: '/trip/packing', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.packing.list(tripId));
+      if (!r.ok) return json(200, { available: false, error: r.error, items: [] });
+      const items = (r.value || []).map(function (p) { return { id: p.id, name: p.name || p.title || '', packed: !!(p.is_packed || p.packed), bag: (p.bag && (p.bag.name || p.bag)) || null, qty: p.quantity || p.qty || null }; });
+      return json(200, { available: true, items });
+    } },
+    { method: 'GET', path: '/trip/files', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.files.list(tripId));
+      if (!r.ok) return json(200, { available: false, error: r.error, files: [] });
+      const files = (r.value || []).map(function (f) { return { id: f.id, name: f.name || f.filename || f.original_name || '', size: f.size || f.size_bytes || null, kind: f.mime_type || f.type || null }; });
+      return json(200, { available: true, files });
+    } },
+    // Live activity feed (fed by the events subscription)
+    { method: 'GET', path: '/activity', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const rows = await ctx.db.query('SELECT event, at FROM activity WHERE trip_id = ? ORDER BY id DESC LIMIT 30', tripId);
+      const counts = await ctx.db.query('SELECT event, COUNT(*) AS n FROM activity WHERE trip_id = ? GROUP BY event ORDER BY n DESC', tripId);
+      return json(200, { recent: rows, counts });
     } },
 
     // ---- 2. Nihongo (personal) ---------------------------------------------
@@ -334,7 +342,7 @@ const PLUGIN = {
       const userId = requireUser(req);
       const st = await ctx.db.query('SELECT offset FROM phrase_state WHERE user_id = ?', userId);
       const offset = (st.length ? st[0].offset : 0) + 1;
-      await ctx.db.exec('INSERT INTO phrase_state(user_id, offset) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET offset = excluded.offset', userId, offset);
+      await ctx.db.exec('INSERT INTO phrase_state(user_id, offset) VALUES(?, ?) ON CONFLICT(user_id) DO UPDATE SET offset=excluded.offset', userId, offset);
       const idx = (((dayOfYear(new Date()) + offset) % PHRASES.length) + PHRASES.length) % PHRASES.length;
       return json(200, { phrase_of_day: PHRASES[idx] });
     } },
@@ -350,20 +358,16 @@ const PLUGIN = {
       return json(200, { phrase_id: pid, favorite: faved });
     } },
 
-    // ---- 3. Culture & gomi (local) -----------------------------------------
-    { method: 'GET', path: '/etiquette', auth: true, async handler(req, ctx) {
-      return json(200, { items: ETIQUETTE, categories: Array.from(new Set(ETIQUETTE.map(function (e) { return e.category; }))) }, 'max-age=3600');
-    } },
+    // ---- 3. Culture & gomi -------------------------------------------------
+    { method: 'GET', path: '/etiquette', auth: true, async handler(req, ctx) { return json(200, { items: ETIQUETTE, categories: Array.from(new Set(ETIQUETTE.map(function (e) { return e.category; }))) }, 'max-age=3600'); } },
     { method: 'GET', path: '/gomi', auth: true, async handler(req, ctx) {
       const q = String((req.query && (req.query.q || req.query.query)) || '').trim().toLowerCase();
       let items = GOMI;
-      if (q) items = GOMI.filter(function (g) {
-        return (g.item_en && g.item_en.toLowerCase().includes(q)) || (g.item_de && g.item_de.toLowerCase().includes(q)) || (g.bin_en && g.bin_en.toLowerCase().includes(q)) || (g.bin_de && g.bin_de.toLowerCase().includes(q));
-      });
+      if (q) items = GOMI.filter(function (g) { return (g.item_en && g.item_en.toLowerCase().includes(q)) || (g.item_de && g.item_de.toLowerCase().includes(q)) || (g.bin_en && g.bin_en.toLowerCase().includes(q)) || (g.bin_de && g.bin_de.toLowerCase().includes(q)); });
       return json(200, { items, total: GOMI.length, query: q });
     } },
 
-    // ---- 4. Shared budget ---------------------------------------------------
+    // ---- 4. Shared budget + native TREK budget (costs) ---------------------
     { method: 'GET', path: '/budget/state', auth: true, async handler(req, ctx) {
       const { userId, tripId } = await requireTrip(req, ctx);
       const prefs = await loadUserPrefs(ctx, userId);
@@ -373,24 +377,20 @@ const PLUGIN = {
       const totalRows = await ctx.db.query('SELECT COALESCE(SUM(amount_yen),0) AS s FROM spend WHERE trip_id = ?', tripId);
       const spent = totalRows.length ? totalRows[0].s : 0;
       const names = await resolveNames(ctx, spends.map(function (s) { return s.user_id; }));
+      const synced = await ctx.db.query('SELECT spend_id FROM cost_sync');
+      const syncedSet = {}; synced.forEach(function (r) { syncedSet[r.spend_id] = true; });
       let fx = await cacheGet(ctx, 'fx');
-      if (isStale(fx, FX_TTL)) { try { fx = await refreshFx(ctx); } catch (e) { ctx.log.warn('fx', { msg: String(e && e.message) }); } }
+      if (isStale(fx, FX_TTL)) { const r = await attempt(() => refreshFx(ctx)); if (r.ok) fx = r.value; }
       const rate = fx && fx.data && fx.data.rates ? fx.data.rates[prefs.home_currency] : null;
       return json(200, {
         planned_yen: planned, spent_yen: spent, remaining_yen: planned - spent,
-        spends: spends.map(function (s) { return { id: s.id, amount_yen: s.amount_yen, note: s.note, at: s.at, by: names[s.user_id] || null }; }),
+        spends: spends.map(function (s) { return { id: s.id, amount_yen: s.amount_yen, note: s.note, at: s.at, by: names[s.user_id] || null, synced: !!syncedSet[s.id] }; }),
         currency: prefs.home_currency, currency_symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency,
         rate, fx_fetched_at: fx ? fx.fetched_at : null,
         planned_home: rate != null ? planned * rate : null, spent_home: rate != null ? spent * rate : null, remaining_home: rate != null ? (planned - spent) * rate : null,
       });
     } },
-    { method: 'POST', path: '/budget/plan', auth: true, async handler(req, ctx) {
-      const body = await readBody(req);
-      const { tripId } = await requireTrip(req, ctx, body.tripId);
-      const yen = Math.max(0, Math.round(toNum(body.planned_yen, 0)));
-      await ctx.db.exec('INSERT INTO budget(trip_id, planned_yen) VALUES(?, ?) ON CONFLICT(trip_id) DO UPDATE SET planned_yen = excluded.planned_yen', tripId, yen);
-      return json(200, { planned_yen: yen });
-    } },
+    { method: 'POST', path: '/budget/plan', auth: true, async handler(req, ctx) { const body = await readBody(req); const { tripId } = await requireTrip(req, ctx, body.tripId); const yen = Math.max(0, Math.round(toNum(body.planned_yen, 0))); await ctx.db.exec('INSERT INTO budget(trip_id, planned_yen) VALUES(?, ?) ON CONFLICT(trip_id) DO UPDATE SET planned_yen=excluded.planned_yen', tripId, yen); return json(200, { planned_yen: yen }); } },
     { method: 'POST', path: '/budget/spend', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
       const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
@@ -398,15 +398,67 @@ const PLUGIN = {
       if (!amount) return json(400, { error: 'amount required' });
       await ctx.db.exec('INSERT INTO spend(trip_id, user_id, amount_yen, note, at) VALUES(?, ?, ?, ?, ?)', tripId, userId, amount, String(body.note || '').slice(0, 200), nowIso());
       const totalRows = await ctx.db.query('SELECT COALESCE(SUM(amount_yen),0) AS s FROM spend WHERE trip_id = ?', tripId);
+      await safeBroadcastTrip(ctx, tripId, 'spend:added', { amount_yen: amount });
       return json(200, { spent_yen: totalRows[0].s });
     } },
     { method: 'GET', path: '/fx', auth: true, async handler(req, ctx) {
       const { userId } = await requireTrip(req, ctx);
       const prefs = await loadUserPrefs(ctx, userId);
-      let fx = await cacheGet(ctx, 'fx');
-      if (isStale(fx, FX_TTL)) { try { fx = await refreshFx(ctx); } catch (e) { ctx.log.warn('fx', { msg: String(e && e.message) }); } }
+      let fx = await cacheGet(ctx, 'fx'); if (isStale(fx, FX_TTL)) { const r = await attempt(() => refreshFx(ctx)); if (r.ok) fx = r.value; }
       const rate = fx && fx.data && fx.data.rates ? fx.data.rates[prefs.home_currency] : null;
       return json(200, { base: 'JPY', currency: prefs.home_currency, symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency, rate, rates: fx && fx.data ? fx.data.rates : null, per_1000_yen: rate != null ? 1000 * rate : null, fetched_at: fx ? fx.fetched_at : null, source_updated: fx && fx.data ? fx.data.source_updated : null });
+    } },
+    // Native budget items (Costs addon) — read (getByTrip + listMine), create, update, delete
+    { method: 'GET', path: '/costs', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const byTrip = await attempt(() => ctx.costs.getByTrip(tripId));
+      if (!byTrip.ok) return json(200, { available: false, error: byTrip.error, items: [] });
+      const mine = await attempt(() => ctx.costs.listMine());
+      const norm = function (c) { return { id: c.id, name: c.name || c.title || '', amount: c.amount != null ? c.amount : (c.value != null ? c.value : null), currency: c.currency || null }; };
+      return json(200, { available: true, items: (byTrip.value || []).map(norm), mine_count: mine.ok ? (mine.value || []).length : null });
+    } },
+    { method: 'POST', path: '/costs/add', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
+      const amount = Math.round(toNum(body.amount, 0));
+      const r = await attempt(() => ctx.costs.create(tripId, { name, amount, currency: 'JPY' }));
+      if (!r.ok) return json(400, { error: r.error });
+      await logActivity(ctx, tripId, 'budget:created');
+      return json(200, { item: r.value });
+    } },
+    { method: 'POST', path: '/costs/update', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const itemId = toNum(body.itemId, null); if (itemId == null) return json(400, { error: 'itemId required' });
+      const input = {}; if (body.name != null) input.name = String(body.name).slice(0, 200); if (body.amount != null) input.amount = Math.round(toNum(body.amount, 0));
+      const r = await attempt(() => ctx.costs.update(tripId, itemId, input));
+      if (!r.ok) return json(400, { error: r.error });
+      return json(200, { item: r.value });
+    } },
+    { method: 'POST', path: '/costs/delete', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const itemId = toNum(body.itemId, null); if (itemId == null) return json(400, { error: 'itemId required' });
+      const r = await attempt(() => ctx.costs.delete(tripId, itemId));
+      if (!r.ok) return json(400, { error: r.error });
+      return json(200, { deleted: r.value && r.value.deleted !== false });
+    } },
+    // Push all un-synced plugin expenses into TREK's native budget
+    { method: 'POST', path: '/costs/sync', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const spends = await ctx.db.query('SELECT id, amount_yen, note FROM spend WHERE trip_id = ?', tripId);
+      const done = await ctx.db.query('SELECT spend_id FROM cost_sync');
+      const doneSet = {}; done.forEach(function (r) { doneSet[r.spend_id] = true; });
+      let created = 0, failed = 0, first_error = null;
+      for (const s of spends) {
+        if (doneSet[s.id]) continue;
+        const r = await attempt(() => ctx.costs.create(tripId, { name: s.note || 'Expense', amount: s.amount_yen, currency: 'JPY' }));
+        if (r.ok) { created++; await ctx.db.exec('INSERT INTO cost_sync(spend_id, cost_id, at) VALUES(?, ?, ?)', s.id, (r.value && r.value.id) || null, nowIso()); }
+        else { failed++; if (!first_error) first_error = r.error; }
+      }
+      return json(200, { created, failed, error: first_error });
     } },
 
     // ---- 5. IC card (personal) ---------------------------------------------
@@ -426,7 +478,7 @@ const PLUGIN = {
       const body = await readBody(req);
       const yen = Math.max(0, Math.round(toNum(body.yen, 0)));
       const at = nowIso();
-      await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen = excluded.yen, updated_at = excluded.updated_at', userId, yen, at);
+      await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, yen, at);
       await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, 'set', yen, yen, at);
       return json(200, { yen });
     } },
@@ -441,22 +493,16 @@ const PLUGIN = {
       const names = await resolveNames(ctx, visited.map(function (v) { return v.by_user; }).concat(col.map(function (c) { return c.by_user; })));
       const collections = { onsen: [], goshuin: [], 'eki-stamp': [] };
       col.forEach(function (c) { if (!collections[c.kind]) collections[c.kind] = []; collections[c.kind].push({ key: c.key, at: c.at, by: names[c.by_user] || null }); });
-      return json(200, {
-        food: foodMap, prefectures: PREFECTURES,
-        visited: visited.map(function (v) { return v.code; }),
-        visited_by: visited.reduce(function (acc, v) { acc[v.code] = names[v.by_user] || null; return acc; }, {}),
-        collections,
-      });
+      return json(200, { food: foodMap, prefectures: PREFECTURES, visited: visited.map(function (v) { return v.code; }), visited_by: visited.reduce(function (a, v) { a[v.code] = names[v.by_user] || null; return a; }, {}), collections });
     } },
     { method: 'POST', path: '/food/inc', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
       const { tripId } = await requireTrip(req, ctx, body.tripId);
-      const kind = String(body.kind || '').slice(0, 40);
-      if (!kind) return json(400, { error: 'kind required' });
+      const kind = String(body.kind || '').slice(0, 40); if (!kind) return json(400, { error: 'kind required' });
       const delta = Math.trunc(toNum(body.delta, 1)) || 1;
       const cur = await ctx.db.query('SELECT count FROM food_tally WHERE trip_id = ? AND kind = ?', tripId, kind);
       const next = Math.max(0, (cur.length ? cur[0].count : 0) + delta);
-      await ctx.db.exec('INSERT INTO food_tally(trip_id, kind, count, at) VALUES(?, ?, ?, ?) ON CONFLICT(trip_id, kind) DO UPDATE SET count = excluded.count, at = excluded.at', tripId, kind, next, nowIso());
+      await ctx.db.exec('INSERT INTO food_tally(trip_id, kind, count, at) VALUES(?, ?, ?, ?) ON CONFLICT(trip_id, kind) DO UPDATE SET count=excluded.count, at=excluded.at', tripId, kind, next, nowIso());
       return json(200, { kind, count: next });
     } },
     { method: 'POST', path: '/prefectures/toggle', auth: true, async handler(req, ctx) {
@@ -469,6 +515,7 @@ const PLUGIN = {
       if (cur.length) { await ctx.db.exec('DELETE FROM visited_prefs WHERE trip_id = ? AND code = ?', tripId, code); visited = false; }
       else { await ctx.db.exec('INSERT INTO visited_prefs(trip_id, code, by_user, at) VALUES(?, ?, ?, ?)', tripId, code, userId, nowIso()); visited = true; }
       const cnt = await ctx.db.query('SELECT COUNT(*) AS n FROM visited_prefs WHERE trip_id = ?', tripId);
+      await safeBroadcastTrip(ctx, tripId, 'prefecture:changed', { code, visited });
       return json(200, { code, visited, total_visited: cnt[0].n });
     } },
     { method: 'POST', path: '/collect/add', auth: true, async handler(req, ctx) {
@@ -485,16 +532,81 @@ const PLUGIN = {
       return json(200, { kind, key, added });
     } },
 
-    // ---- 7. Season & events -------------------------------------------------
+    // ---- 7. Season & events + write into the trip planner ------------------
     { method: 'GET', path: '/season', auth: true, async handler(req, ctx) {
       const { trip, tripId } = await requireTrip(req, ctx);
       const td = tripDates(trip);
       const months = tripMonths(td.start, td.end);
       const visited = await ctx.db.query('SELECT code FROM visited_prefs WHERE trip_id = ?', tripId);
       const visitedSet = new Set(visited.map(function (v) { return v.code; }));
-      const matsuri = MATSURI.map(function (m) { return Object.assign({}, m, { in_window: months == null ? false : months.includes(m.month), nearby: visitedSet.has(m.prefecture_code) }); })
-        .sort(function (a, b) { return (Number(b.in_window) - Number(a.in_window)) || (Number(b.nearby) - Number(a.nearby)) || (a.month - b.month); });
+      const matsuri = MATSURI.map(function (m) { return Object.assign({}, m, { in_window: months == null ? false : months.includes(m.month), nearby: visitedSet.has(m.prefecture_code) }); }).sort(function (a, b) { return (Number(b.in_window) - Number(a.in_window)) || (Number(b.nearby) - Number(a.nearby)) || (a.month - b.month); });
       return json(200, { sakura: SAKURA, matsuri, trip_months: months, trip: { start: td.start, end: td.end } });
+    } },
+    // Current planner places (db:read:trips)
+    { method: 'GET', path: '/itinerary', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.trips.getPlaces(tripId));
+      const places = r.ok ? (r.value || []).map(function (p) { return { id: p.id, name: p.name || p.title || '', notes: p.notes || null }; }) : [];
+      return json(200, { available: r.ok, error: r.ok ? null : r.error, places });
+    } },
+    // Add an event/city to the planner: create a place (+ optional day + assignment),
+    // tag it via ctx.meta and mirror the note for the place-detail hook.
+    { method: 'POST', path: '/itinerary/add', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
+      const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
+      const notes = String(body.notes || '').slice(0, 2000);
+      const placeRes = await attempt(() => ctx.places.create(tripId, { name, notes }));
+      if (!placeRes.ok) return json(400, { error: placeRes.error });
+      const place = placeRes.value; const placeId = place && place.id;
+      let dayId = null, assigned = false;
+      if (body.date && placeId != null) {
+        const dayRes = await attempt(() => ctx.days.create(tripId, { date: String(body.date) }));
+        if (dayRes.ok && dayRes.value) { dayId = dayRes.value.id; const asg = await attempt(() => ctx.itinerary.assign(tripId, dayId, placeId)); assigned = asg.ok; }
+      }
+      if (placeId != null) {
+        await attempt(() => ctx.meta.set('place', placeId, 'source', 'trek-x-japan'));
+        if (notes) await attempt(() => ctx.meta.set('place', placeId, 'note', notes));
+        await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, by_user=excluded.by_user, at=excluded.at', placeId, tripId, notes || name, userId, nowIso());
+      }
+      return json(200, { place: place, day_id: dayId, assigned });
+    } },
+    { method: 'POST', path: '/itinerary/place/update', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const placeId = toNum(body.placeId, null); if (placeId == null) return json(400, { error: 'placeId required' });
+      const input = {}; if (body.name != null) input.name = String(body.name).slice(0, 200); if (body.notes != null) input.notes = String(body.notes).slice(0, 2000);
+      const r = await attempt(() => ctx.places.update(tripId, placeId, input));
+      if (!r.ok) return json(400, { error: r.error });
+      if (body.notes != null) { await attempt(() => ctx.meta.set('place', placeId, 'note', String(body.notes).slice(0, 2000))); await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, at) VALUES(?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, at=excluded.at', placeId, tripId, String(body.notes).slice(0, 2000), nowIso()); }
+      return json(200, { place: r.value });
+    } },
+    { method: 'POST', path: '/itinerary/place/delete', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const placeId = toNum(body.placeId, null); if (placeId == null) return json(400, { error: 'placeId required' });
+      const r = await attempt(() => ctx.places.delete(tripId, placeId));
+      if (!r.ok) return json(400, { error: r.error });
+      await attempt(() => ctx.meta.delete('place', placeId, 'note'));
+      await ctx.db.exec('DELETE FROM place_notes WHERE place_id = ?', placeId);
+      return json(200, { deleted: r.value && r.value.deleted !== false });
+    } },
+    { method: 'POST', path: '/itinerary/day/update', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const dayId = toNum(body.dayId, null); if (dayId == null) return json(400, { error: 'dayId required' });
+      const input = {}; if (body.title != null) input.title = String(body.title).slice(0, 200); if (body.notes != null) input.notes = String(body.notes).slice(0, 2000);
+      const r = await attempt(() => ctx.days.update(tripId, dayId, input));
+      if (!r.ok) return json(400, { error: r.error });
+      return json(200, { day: r.value });
+    } },
+    { method: 'POST', path: '/itinerary/unassign', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const assignmentId = toNum(body.assignmentId, null); if (assignmentId == null) return json(400, { error: 'assignmentId required' });
+      const r = await attempt(() => ctx.itinerary.unassign(tripId, assignmentId));
+      if (!r.ok) return json(400, { error: r.error });
+      return json(200, { deleted: r.value && r.value.deleted !== false });
     } },
 
     // ---- 8. Safety & weather ------------------------------------------------
@@ -502,12 +614,10 @@ const PLUGIN = {
       const { tripId } = await requireTrip(req, ctx);
       const tp = await loadTripPrefs(ctx, tripId);
       const c = coords(tp);
-      let weatherKey = 'weather';
-      if (c) weatherKey = 'weather:' + c.lat.toFixed(3) + ',' + c.lon.toFixed(3);
+      let weatherKey = 'weather'; if (c) weatherKey = 'weather:' + c.lat.toFixed(3) + ',' + c.lon.toFixed(3);
       let weather = c ? await cacheGet(ctx, weatherKey) : null;
-      if (c && isStale(weather, WEATHER_TTL)) { try { weather = await refreshWeather(ctx, c.lat, c.lon, weatherKey); } catch (e) { ctx.log.warn('weather', { msg: String(e && e.message) }); } }
-      let quake = await cacheGet(ctx, 'quake');
-      if (isStale(quake, QUAKE_TTL)) { try { quake = await refreshQuake(ctx); } catch (e) { ctx.log.warn('quake', { msg: String(e && e.message) }); } }
+      if (c && isStale(weather, WEATHER_TTL)) { const r = await attempt(() => refreshWeather(ctx, c.lat, c.lon, weatherKey)); if (r.ok) weather = r.value; }
+      let quake = await cacheGet(ctx, 'quake'); if (isStale(quake, QUAKE_TTL)) { const r = await attempt(() => refreshQuake(ctx)); if (r.ok) quake = r.value; }
       return json(200, {
         location: c ? { lat: c.lat, lon: c.lon, city: tp.weather_city || null } : { city: tp.weather_city || null, configured: false },
         weather: weather && weather.data ? weather.data : null, weather_fetched_at: weather ? weather.fetched_at : null,
@@ -515,12 +625,33 @@ const PLUGIN = {
         emergency: PHRASES.filter(function (p) { return p.category === EMERGENCY_PHRASE_CATEGORY; }),
       });
     } },
+
+    // ---- Trip-level integrations: ctx.trips.update + ctx.meta (get/set/list/delete)
+    { method: 'POST', path: '/trip/currency', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const r = await attempt(() => ctx.trips.update(tripId, { currency: 'JPY' }));
+      if (!r.ok) return json(400, { error: r.error });
+      return json(200, { trip: r.value });
+    } },
+    { method: 'GET', path: '/trip/meta', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.meta.list('trip', tripId));
+      return json(200, { available: r.ok, meta: r.ok ? r.value : {}, error: r.ok ? null : r.error });
+    } },
+    { method: 'POST', path: '/trip/pin', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const text = String(body.text || '').slice(0, 4000);
+      if (!text) { const r = await attempt(() => ctx.meta.delete('trip', tripId, 'pinned_tips')); return json(200, { pinned_tips: null, cleared: r.ok }); }
+      const r = await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
+      if (!r.ok) return json(400, { error: r.error });
+      await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
+      return json(200, { pinned_tips: text });
+    } },
   ],
 };
 
-// Convert each handler through the guard wrapper before export.
-PLUGIN.routes = PLUGIN.routes.map(function (r) {
-  return Object.assign({}, r, { handler: wrapHandler(r.handler) });
-});
+PLUGIN.routes = PLUGIN.routes.map(function (r) { return Object.assign({}, r, { handler: wrapHandler(r.handler) }); });
 
 module.exports = definePlugin(PLUGIN);

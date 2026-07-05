@@ -1,7 +1,11 @@
 <!doctype html>
 <!-- DEV/SCREENSHOT HARNESS ONLY — deleted before pack. Emulates the TREK host:
-     replies trek:context (theme/locale via query), proxies trek:invoke to the
-     real dev /api (same origin), honours resize. ?tab=food&theme=dark&locale=de -->
+     replies trek:context (theme/locale/tripId via query), proxies trek:invoke to
+     the real dev /api (same origin), honours resize.
+     ?tab=food&theme=dark&locale=de&tripId=1&mock=1
+     mock=1 supplies realistic responses for the 3.2.1-only ctx.* endpoints the
+     SDK dev shim does not implement (packing/files/costs/activity/meta/itinerary),
+     i.e. exactly what a real TREK 3.2.1 host returns. -->
 <html lang="en">
 <head><meta charset="utf-8" /><title>Harness</title>
 <style>
@@ -15,9 +19,42 @@
   var tab = q.get('tab') || 'countdown';
   var theme = q.get('theme') || 'light';
   var locale = q.get('locale') || 'en';
-  var tripId = q.get('tripId') || '1';   // trip-page always has a trip in context
+  var tripId = q.get('tripId') || '1';
+  var mock = q.get('mock') === '1';
   var f = document.getElementById('f');
   f.src = '/ui#' + tab;
+
+  var NOW = Date.now();
+  function iso(minAgo) { return new Date(NOW - minAgo * 60000).toISOString(); }
+  // Canned responses for 3.2.1-only endpoints (what a real host returns).
+  var MOCK = {
+    '/trip/packing': { available: true, items: [
+      { id: 1, name: 'Universal power adapter', packed: true, bag: 'Carry-on' },
+      { id: 2, name: 'JR Pass voucher', packed: false, bag: null },
+      { id: 3, name: 'Pocket WiFi', packed: true, bag: 'Day bag' },
+      { id: 4, name: 'Foldable umbrella', packed: false, bag: null },
+      { id: 5, name: 'Coin purse', packed: true, bag: 'Day bag' } ] },
+    '/trip/files': { available: true, files: [
+      { id: 1, name: 'JR-Pass-voucher.pdf' },
+      { id: 2, name: 'Ryokan-Kyoto-confirmation.pdf' },
+      { id: 3, name: 'Flight-itinerary.pdf' } ] },
+    '/activity': { counts: [
+      { event: 'place:created', n: 4 }, { event: 'file:created', n: 3 }, { event: 'day:updated', n: 2 } ],
+      recent: [
+      { event: 'place:created', at: iso(4) }, { event: 'file:created', at: iso(22) },
+      { event: 'place:created', at: iso(70) }, { event: 'day:updated', at: iso(140) } ] },
+    '/costs': { available: true, mine_count: 3, items: [
+      { id: 1, name: 'Ryokan Kyoto (2 nights)', amount: 48000, currency: 'JPY' },
+      { id: 2, name: 'JR Pass x2', amount: 100000, currency: 'JPY' },
+      { id: 3, name: 'Gion Matsuri seats', amount: 6000, currency: 'JPY' } ] },
+    '/itinerary': { available: true, places: [
+      { id: 1, name: 'Gion Matsuri (Kyoto)', notes: 'Float parade' },
+      { id: 2, name: 'Fushimi Inari Taisha', notes: null } ] }
+  };
+  var PIN = 'Meet at Shibuya Hachiko 09:00. JR Pass pickup at the airport. Cash for Kyoto machiya.';
+
+  function subPath(sub) { var i = sub.indexOf('?'); return i >= 0 ? sub.slice(0, i) : sub; }
+
   addEventListener('message', function (e) {
     var m = e.data; if (!m || !m.type) return;
     if (m.type === 'trek:ready' || m.type === 'trek:context:request') {
@@ -25,19 +62,17 @@
         theme: theme, locale: locale, hostOrigin: '*',
         appearance: { scheme: 'default', density: 'comfortable', reducedMotion: false, noTransparency: false } }, '*');
     } else if (m.type === 'trek:invoke') {
-      fetch('/api' + m.sub, { method: m.method || 'GET',
-        headers: { 'content-type': 'application/json' },
-        body: m.body ? JSON.stringify(m.body) : undefined })
+      var path = subPath(m.sub);
+      if (mock && MOCK[path]) { f.contentWindow.postMessage({ type: 'trek:response', requestId: m.requestId, data: MOCK[path] }, '*'); return; }
+      fetch('/api' + m.sub, { method: m.method || 'GET', headers: { 'content-type': 'application/json' }, body: m.body ? JSON.stringify(m.body) : undefined })
         .then(function (r) { return r.json().then(function (data) {
+          if (mock && path === '/meta' && data && typeof data === 'object') data.pinned_tips = PIN;
           if (r.ok) f.contentWindow.postMessage({ type: 'trek:response', requestId: m.requestId, data: data }, '*');
           else f.contentWindow.postMessage({ type: 'trek:error', requestId: m.requestId, code: r.status, message: (data && data.error) || 'error' }, '*');
         }); })
         .catch(function (err) { f.contentWindow.postMessage({ type: 'trek:error', requestId: m.requestId, code: 'error', message: String(err) }, '*'); });
     } else if (m.type === 'trek:resize') {
-      f.style.height = m.height + 'px';
-      document.body.dataset.h = m.height;
-    } else if (m.type === 'trek:notify') {
-      // no-op in harness
+      f.style.height = m.height + 'px'; document.body.dataset.h = m.height;
     }
   });
 </script>

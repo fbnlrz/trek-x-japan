@@ -241,8 +241,21 @@
     var theme = resolveTheme(m);
     ctx.theme = theme;
     document.documentElement.dataset.theme = theme;
+    applyTokens(m.tokens);
     if (!booted) { booted = true; boot(); }
     else { renderHeader(); if (current) openTab(current, true); }
+  }
+  // (≥3.2.1) live token contract: TREK sends the current theme's palette in
+  // `m.tokens`. Mirror any matching custom properties onto :root so our colours
+  // track the host exactly (accent, high-contrast, etc.). Harmless pre-3.2.1.
+  function applyTokens(tokens) {
+    if (!tokens || typeof tokens !== 'object') return;
+    var root = document.documentElement;
+    Object.keys(tokens).forEach(function (k) {
+      var v = tokens[k]; if (v == null) return;
+      var name = k.charAt(0) === '-' ? k : ('--' + k);
+      try { root.style.setProperty(name, String(v)); } catch (_) {}
+    });
   }
   // Follow OS theme until/unless the host tells us otherwise.
   if (window.matchMedia) {
@@ -475,7 +488,8 @@
             '<div class="progress"><span style="width:' + pct + '%"></span></div>' +
             '<div id="checklist">' + listHtml + '</div>' +
           '</div>' +
-        '</div>';
+        '</div>' +
+        '<div class="grid cols2" style="margin-top:14px" id="trek-extra"></div>';
 
       panel.querySelectorAll('.check').forEach(function (el) {
         el.onclick = function () {
@@ -484,8 +498,58 @@
             .catch(function (e) { notify('error', e.message); });
         };
       });
+      loadTrekExtra(panel);
     });
   };
+
+  // TREK-native integrations for the countdown tab: pinned tips (ctx.meta),
+  // packing (db:read:packing), files (db:read:files), activity (events feed).
+  function loadTrekExtra(panel) {
+    var box = panel.querySelector('#trek-extra'); if (!box) return;
+    Promise.all([
+      invoke('/meta', 'GET').catch(function () { return {}; }),
+      invoke('/trip/packing', 'GET').catch(function () { return { available: false, items: [] }; }),
+      invoke('/trip/files', 'GET').catch(function () { return { available: false, files: [] }; }),
+      invoke('/activity', 'GET').catch(function () { return { recent: [], counts: [] }; })
+    ]).then(function (r) {
+      var meta = r[0] || {}, pack = r[1] || {}, files = r[2] || {}, act = r[3] || {};
+      var pinVal = meta.pinned_tips || '';
+      function na(msg) { return '<div class="faint" style="font-size:12px">' + esc(msg) + '</div>'; }
+      var packHtml = pack.available
+        ? ((pack.items || []).length
+            ? (pack.items || []).slice(0, 40).map(function (p) { return '<div class="listrow"><span class="check' + (p.packed ? ' on' : '') + '" style="cursor:default">' + svg('check') + '</span><span style="flex:1">' + esc(p.name) + (p.bag ? ' <span class="faint" style="font-size:11px">· ' + esc(p.bag) + '</span>' : '') + '</span></div>'; }).join('')
+            : na(T('No packing items in this trip yet.', 'Noch keine Packliste in dieser Reise.')))
+        : na(T('Native packing list — available in a TREK 3.2.1 trip.', 'Native Packliste — in einer TREK-3.2.1-Reise verfügbar.'));
+      var filesHtml = files.available
+        ? ((files.files || []).length
+            ? (files.files || []).slice(0, 40).map(function (f) { return '<div class="listrow"><span style="color:var(--text-faint)">' + svg('book') + '</span><span style="flex:1">' + esc(f.name) + '</span></div>'; }).join('')
+            : na(T('No files uploaded to this trip yet.', 'Noch keine Dateien in dieser Reise.')))
+        : na(T('Trip files — available in a TREK 3.2.1 trip.', 'Reise-Dateien — in einer TREK-3.2.1-Reise verfügbar.'));
+      var actHtml = (act.counts || []).length
+        ? '<div class="wrap" style="margin-bottom:8px">' + (act.counts || []).slice(0, 8).map(function (c) { return '<span class="chip static">' + esc(c.event) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
+          (act.recent || []).slice(0, 10).map(function (a) { return '<div class="listrow"><span style="flex:1">' + esc(a.event) + '</span><span class="faint">' + ago(a.at) + '</span></div>'; }).join('')
+        : na(T('Live feed of trip changes (places, days, files…) appears here.', 'Live-Feed der Reise-Änderungen (Orte, Tage, Dateien…) erscheint hier.'));
+
+      box.innerHTML =
+        '<div class="card"><h2>' + svg('star') + T('Pinned tips (shared)', 'Angeheftete Tipps (geteilt)') + '</h2>' +
+          '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Pinned to the trip via TREK meta — everyone sees it.', 'An die Reise geheftet (TREK-Meta) — alle sehen es.') + '</div>' +
+          '<textarea class="fld" id="pin-text" rows="3" placeholder="' + T('e.g. Meet at Shibuya Hachiko 09:00', 'z.B. Treffpunkt Shibuya Hachiko 09:00') + '">' + esc(pinVal) + '</textarea>' +
+          '<div class="row" style="margin-top:8px"><button class="btn" id="pin-save">' + T('Save pin', 'Pin speichern') + '</button>' +
+          '<button class="btn sec sm" id="pin-clear">' + T('Clear', 'Löschen') + '</button></div>' +
+        '</div>' +
+        '<div class="card"><h2>' + svg('countdown') + T('Live trip activity', 'Live-Reise-Aktivität') + '</h2>' + actHtml + '</div>' +
+        '<div class="card"><h2>' + svg('check') + T('Trip packing (from TREK)', 'Reise-Packliste (aus TREK)') + '</h2>' + packHtml + '</div>' +
+        '<div class="card"><h2>' + svg('book') + T('Trip files (from TREK)', 'Reise-Dateien (aus TREK)') + '</h2>' + filesHtml + '</div>';
+
+      box.querySelector('#pin-save').onclick = function () {
+        invoke('/trip/pin', 'POST', { text: box.querySelector('#pin-text').value }).then(function () { notify('success', T('Pinned', 'Angeheftet')); }).catch(function (e) { notify('error', e.message); });
+      };
+      box.querySelector('#pin-clear').onclick = function () {
+        invoke('/trip/pin', 'POST', { text: '' }).then(function () { box.querySelector('#pin-text').value = ''; notify('info', T('Cleared', 'Gelöscht')); }).catch(function (e) { notify('error', e.message); });
+      };
+      reportHeight();
+    });
+  }
 
   // ---- 2. Nihongo --------------------------------------------------------
   var nihongoState = { cat: 'all', favOnly: false };
@@ -643,7 +707,9 @@
           '<button class="btn" id="sp-add">' + svg('plus') + '</button></div>' +
           '<div class="scrollx" style="margin-top:12px;max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Note', 'Notiz') + '</th><th></th></tr></thead><tbody>' + spendRows + '</tbody></table></div>' +
         '</div>' +
-      '</div>';
+      '</div>' +
+      '<div class="card" style="margin-top:14px" id="costs-card"><h2>' + svg('yen') + T('TREK budget (Costs addon)', 'TREK-Budget (Costs-Addon)') + '</h2>' +
+        '<div class="loading"><span class="spinner"></span></div></div>';
 
     panel.querySelector('#plan-save').onclick = function () {
       invoke('/budget/plan', 'POST', { planned_yen: panel.querySelector('#plan').value }).then(function () {
@@ -655,6 +721,44 @@
       if (!amt) { notify('warning', T('Enter an amount', 'Betrag eingeben')); return; }
       invoke('/budget/spend', 'POST', { amount_yen: amt, note: panel.querySelector('#sp-note').value }).then(function () { openTab('budget', true); });
     };
+    loadCosts(panel);
+  }
+
+  // Native TREK budget items (Costs addon): list / add / delete / sync.
+  function loadCosts(panel) {
+    var card = panel.querySelector('#costs-card'); if (!card) return;
+    invoke('/costs', 'GET').catch(function () { return { available: false }; }).then(function (c) {
+      var body;
+      if (!c.available) {
+        body = '<div class="banner warn">' + T('The Costs (budget) addon is not enabled on this trip, or your host is pre-3.2.1. Enable it in TREK to push expenses into the native budget.', 'Das Costs-(Budget-)Addon ist für diese Reise nicht aktiviert oder der Host ist älter als 3.2.1. Aktiviere es in TREK, um Ausgaben ins native Budget zu übertragen.') + '</div>';
+      } else {
+        var rows = (c.items || []).map(function (it) {
+          return '<tr><td>' + esc(it.name) + '</td><td class="num">' + (it.amount != null ? esc(String(it.amount)) + ' ' + esc(it.currency || '') : '—') + '</td>' +
+            '<td><button class="btn sec sm cost-del" data-id="' + esc(String(it.id)) + '">' + svg('minus') + '</button></td></tr>';
+        }).join('') || '<tr><td colspan="3" class="faint">' + T('No native budget items yet', 'Noch keine nativen Budget-Posten') + '</td></tr>';
+        body =
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Real TREK budget items via ctx.costs — shared with the trip’s Costs tab.', 'Echte TREK-Budget-Posten über ctx.costs — geteilt mit dem Costs-Tab der Reise.') + '</div>' +
+          '<div class="row" style="margin-bottom:10px"><input class="fld" id="cost-name" placeholder="' + T('name', 'Name') + '" /><input class="fld" id="cost-amt" type="number" placeholder="¥" style="max-width:120px" />' +
+          '<button class="btn" id="cost-add">' + T('Add', 'Hinzufügen') + '</button>' +
+          '<button class="btn sec" id="cost-sync">' + T('Sync all expenses', 'Alle Ausgaben übertragen') + '</button></div>' +
+          '<div class="scrollx"><table class="tbl"><thead><tr><th>' + T('Name', 'Name') + '</th><th>' + T('Amount', 'Betrag') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
+      }
+      card.innerHTML = '<h2>' + svg('yen') + T('TREK budget (Costs addon)', 'TREK-Budget (Costs-Addon)') + '</h2>' + body;
+      var add = card.querySelector('#cost-add');
+      if (add) add.onclick = function () {
+        var name = card.querySelector('#cost-name').value, amt = card.querySelector('#cost-amt').value;
+        if (!name) return notify('warning', T('Enter a name', 'Name eingeben'));
+        invoke('/costs/add', 'POST', { name: name, amount: amt }).then(function () { loadCosts(panel); }).catch(function (e) { notify('error', e.message); });
+      };
+      var sync = card.querySelector('#cost-sync');
+      if (sync) sync.onclick = function () {
+        invoke('/costs/sync', 'POST', {}).then(function (r) { notify('success', (r.created || 0) + ' ' + T('added to trip budget', 'ins Reise-Budget übertragen')); loadCosts(panel); }).catch(function (e) { notify('error', e.message); });
+      };
+      card.querySelectorAll('.cost-del').forEach(function (b) {
+        b.onclick = function () { invoke('/costs/delete', 'POST', { itemId: b.getAttribute('data-id') }).then(function () { loadCosts(panel); }).catch(function (e) { notify('error', e.message); }); };
+      });
+      reportHeight();
+    });
   }
 
   // ---- 5. IC card --------------------------------------------------------
@@ -813,7 +917,7 @@
           '<td>' + mmdd(s.koyo_avg) + '</td></tr>';
       }).join('');
 
-      var matsuriCards = d.matsuri.slice(0, 40).map(function (m) {
+      var matsuriCards = d.matsuri.slice(0, 40).map(function (m, i) {
         var tags = '';
         if (m.in_window) tags += '<span class="chip static" style="background:var(--accent);color:var(--accent-text)">' + T('in your dates', 'in deinem Zeitraum') + '</span>';
         if (m.nearby) tags += '<span class="chip static">' + T('nearby', 'in der Nähe') + '</span>';
@@ -821,7 +925,8 @@
           '<div class="between"><div><b>' + esc(m.name) + '</b> <span class="jp">' + esc(m.name_jp) + '</span></div>' +
           '<span class="faint">' + monthName(m.month) + '</span></div>' +
           '<div class="muted" style="font-size:12px">' + esc(m.city) + ' · ' + esc(T(m.blurb_en, m.blurb_de)) + '</div>' +
-          (tags ? '<div class="wrap" style="margin-top:5px">' + tags + '</div>' : '') + '</div>';
+          '<div class="between" style="margin-top:6px"><div class="wrap">' + tags + '</div>' +
+          '<button class="btn sec sm mplan" data-i="' + i + '">' + svg('plus') + ' ' + T('Add to planner', 'Zum Planer') + '</button></div></div>';
       }).join('');
 
       var windowLine = months
@@ -833,9 +938,19 @@
           '<div class="card"><h2>' + svg('season') + T('Sakura & koyo', 'Sakura & Kōyō') + '</h2>' +
             '<div class="scrollx" style="max-height:520px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura', 'Sakura') + '</th><th>' + T('Koyo', 'Kōyō') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
           '<div class="card"><h2>' + svg('season') + T('Matsuri & hanabi', 'Matsuri & Hanabi') + '</h2>' +
-            '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + '</div>' +
+            '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + ' · ' + T('“Add to planner” creates a place in the trip.', '„Zum Planer“ legt einen Ort in der Reise an.') + '</div>' +
             '<div style="max-height:500px;overflow:auto">' + matsuriCards + '</div></div>' +
         '</div>';
+
+      panel.querySelectorAll('.mplan').forEach(function (b) {
+        b.onclick = function () {
+          var m = d.matsuri[parseInt(b.getAttribute('data-i'), 10)]; if (!m) return;
+          b.disabled = true;
+          invoke('/itinerary/add', 'POST', { name: m.name + ' (' + m.city + ')', notes: T(m.blurb_en, m.blurb_de) })
+            .then(function () { notify('success', T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
+            .catch(function (e) { b.disabled = false; notify('error', e.message || T('Add failed', 'Hinzufügen fehlgeschlagen')); });
+        };
+      });
     });
   };
 
@@ -910,6 +1025,9 @@
             '<div style="flex:1"><label class="lbl">' + T('Longitude', 'Längengrad') + '</label><input class="fld" id="s-lon" type="number" step="any" value="' + esc(tp.weather_lon || '') + '" placeholder="139.76" /></div></div>' +
           '</div>' +
         '</div>' +
+        '<div class="card" style="margin-top:14px"><h2>' + svg('yen') + T('Trip integration', 'Reise-Integration') + '</h2>' +
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Write into the TREK trip itself (needs your trip-edit permission).', 'Direkt in die TREK-Reise schreiben (benötigt deine Trip-Bearbeitungsrechte).') + '</div>' +
+          '<button class="btn sec" id="s-cur-jpy">' + T('Set trip currency to JPY (¥)', 'Reisewährung auf JPY (¥) setzen') + '</button></div>' +
         '<div class="row" style="margin-top:14px"><button class="btn" id="s-save">' + T('Save preferences', 'Einstellungen speichern') + '</button>' +
         '<span class="faint" style="font-size:12px">' + T('Personal settings are per user; the weather location is shared with the trip.', 'Persönliches ist pro Nutzer; der Wetter-Ort gilt für die ganze Reise.') + '</span></div>';
 
@@ -928,6 +1046,10 @@
           notify('success', T('Preferences saved', 'Einstellungen gespeichert'));
           sectionCache = {};
         }).catch(function (e) { notify('error', e.message); });
+      };
+      panel.querySelector('#s-cur-jpy').onclick = function () {
+        invoke('/trip/currency', 'POST', {}).then(function () { notify('success', T('Trip currency set to JPY', 'Reisewährung auf JPY gesetzt')); })
+          .catch(function (e) { notify('error', e.message || T('Not permitted', 'Nicht erlaubt')); });
       };
     });
   };
