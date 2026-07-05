@@ -1,0 +1,17 @@
+{
+  "config": {},
+  "trips": {
+    "1": {
+      "members": [1],
+      "data": {
+        "id": 1,
+        "title": "Japan 2026",
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-14"
+      }
+    }
+  },
+  "users": {
+    "1": { "id": 1, "username": "traveler", "display_name": "Traveler" }
+  }
+}

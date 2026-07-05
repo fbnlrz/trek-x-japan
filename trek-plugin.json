@@ -1,0 +1,110 @@
+{
+  "id": "trek-x-japan",
+  "name": "TREK × Japan",
+  "version": "1.0.0",
+  "apiVersion": 1,
+  "type": "page",
+  "author": "fbnlrz",
+  "description": "One hub for a Japan trip: countdown & packing, phrasebook, etiquette & gomi, yen budget with live FX, Suica balance, food & prefecture passport, sakura & matsuri, weather & quakes.",
+  "homepage": "https://github.com/fbnlrz/trek-x-japan",
+  "license": "MIT",
+  "icon": "Compass",
+  "trek": ">=3.2.0 <4.0.0",
+  "nativeModules": false,
+  "permissions": [
+    "db:own",
+    "db:read:trips",
+    "http:outbound",
+    "http:outbound:api.open-meteo.com",
+    "http:outbound:open.er-api.com",
+    "http:outbound:www.jma.go.jp"
+  ],
+  "egress": [
+    "api.open-meteo.com",
+    "open.er-api.com",
+    "www.jma.go.jp"
+  ],
+  "settings": [
+    {
+      "key": "home_currency",
+      "label": "Home currency",
+      "input_type": "select",
+      "scope": "user",
+      "required": false,
+      "options": [
+        { "value": "EUR", "label": "EUR (€)" },
+        { "value": "USD", "label": "USD ($)" },
+        { "value": "GBP", "label": "GBP (£)" },
+        { "value": "CHF", "label": "CHF (Fr.)" }
+      ],
+      "hint": "Currency shown alongside yen amounts."
+    },
+    {
+      "key": "low_ic_threshold",
+      "label": "Low IC-card warning (¥)",
+      "input_type": "number",
+      "scope": "user",
+      "required": false,
+      "placeholder": "1000",
+      "hint": "Warn when your Suica/Pasmo/ICOCA balance drops below this."
+    },
+    {
+      "key": "ic_card",
+      "label": "IC card",
+      "input_type": "select",
+      "scope": "user",
+      "required": false,
+      "options": [
+        { "value": "Suica", "label": "Suica" },
+        { "value": "Pasmo", "label": "Pasmo" },
+        { "value": "ICOCA", "label": "ICOCA" },
+        { "value": "Andere", "label": "Other" }
+      ]
+    },
+    {
+      "key": "home_lat",
+      "label": "Weather latitude",
+      "input_type": "number",
+      "scope": "user",
+      "required": false,
+      "placeholder": "35.68",
+      "hint": "Latitude of the city you want weather/forecast for."
+    },
+    {
+      "key": "home_lon",
+      "label": "Weather longitude",
+      "input_type": "number",
+      "scope": "user",
+      "required": false,
+      "placeholder": "139.76",
+      "hint": "Longitude of the city you want weather/forecast for."
+    },
+    {
+      "key": "weather_city",
+      "label": "Weather city",
+      "input_type": "text",
+      "scope": "user",
+      "required": false,
+      "placeholder": "Tokyo",
+      "hint": "Alternative to lat/lon — a city name shown as a label."
+    },
+    {
+      "key": "trip_start",
+      "label": "Trip start (ISO date)",
+      "input_type": "text",
+      "scope": "user",
+      "required": false,
+      "placeholder": "2026-08-01",
+      "hint": "Fallback when no TREK trip is linked."
+    },
+    {
+      "key": "trip_end",
+      "label": "Trip end (ISO date)",
+      "input_type": "text",
+      "scope": "user",
+      "required": false,
+      "placeholder": "2026-08-14",
+      "hint": "Fallback when no TREK trip is linked."
+    }
+  ]
+}

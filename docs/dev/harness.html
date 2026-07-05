@@ -1,0 +1,43 @@
+<!doctype html>
+<!-- DEV/SCREENSHOT HARNESS ONLY — deleted before pack. Emulates the TREK host:
+     replies trek:context (theme/locale via query), proxies trek:invoke to the
+     real dev /api (same origin), honours resize. ?tab=food&theme=dark&locale=de -->
+<html lang="en">
+<head><meta charset="utf-8" /><title>Harness</title>
+<style>
+  html,body{margin:0;background:transparent}
+  #f{display:block;width:100%;border:0;background:transparent}
+</style></head>
+<body>
+<iframe id="f"></iframe>
+<script>
+  var q = new URLSearchParams(location.search);
+  var tab = q.get('tab') || 'countdown';
+  var theme = q.get('theme') || 'light';
+  var locale = q.get('locale') || 'en';
+  var f = document.getElementById('f');
+  f.src = '/ui#' + tab;
+  addEventListener('message', function (e) {
+    var m = e.data; if (!m || !m.type) return;
+    if (m.type === 'trek:ready' || m.type === 'trek:context:request') {
+      f.contentWindow.postMessage({ type: 'trek:context', tripId: null, userId: '1',
+        theme: theme, locale: locale, hostOrigin: '*',
+        appearance: { scheme: 'default', density: 'comfortable', reducedMotion: false, noTransparency: false } }, '*');
+    } else if (m.type === 'trek:invoke') {
+      fetch('/api' + m.sub, { method: m.method || 'GET',
+        headers: { 'content-type': 'application/json' },
+        body: m.body ? JSON.stringify(m.body) : undefined })
+        .then(function (r) { return r.json().then(function (data) {
+          if (r.ok) f.contentWindow.postMessage({ type: 'trek:response', requestId: m.requestId, data: data }, '*');
+          else f.contentWindow.postMessage({ type: 'trek:error', requestId: m.requestId, code: r.status, message: (data && data.error) || 'error' }, '*');
+        }); })
+        .catch(function (err) { f.contentWindow.postMessage({ type: 'trek:error', requestId: m.requestId, code: 'error', message: String(err) }, '*'); });
+    } else if (m.type === 'trek:resize') {
+      f.style.height = m.height + 'px';
+      document.body.dataset.h = m.height;
+    } else if (m.type === 'trek:notify') {
+      // no-op in harness
+    }
+  });
+</script>
+</body></html>

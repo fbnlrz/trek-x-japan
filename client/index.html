@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>TREK × Japan</title>
+<style>
+  /* Light is the pre-context default; OS preference applies before context. */
+  :root {
+    color-scheme: light;
+    --bg-page: #f6f6f7;
+    --bg-card: #ffffff;
+    --bg-hover: rgba(0,0,0,0.03);
+    --bg-sunken: #f2f2f4;
+    --text-primary: #111827;
+    --text-secondary: #374151;
+    --text-muted: #6b7280;
+    --text-faint: #9ca3af;
+    --border-faint: rgba(0,0,0,0.08);
+    --accent: #111827;
+    --accent-text: #ffffff;
+    --accent-hover: #1f2937;
+    --success: #16a34a;
+    --danger: #dc2626;
+    --warning: #b45309;
+    --sakura: #e28aa6;
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.08), 0 1px 2px rgba(0,0,0,.04);
+    --font-system: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --bg-page: #0d0d10;
+    --bg-card: #131316;
+    --bg-hover: rgba(255,255,255,0.06);
+    --bg-sunken: #1a1a1f;
+    --text-primary: #f4f4f5;
+    --text-secondary: #d4d4d8;
+    --text-muted: #a1a1aa;
+    --text-faint: #71717a;
+    --border-faint: rgba(255,255,255,0.09);
+    --accent: #e4e4e7;
+    --accent-text: #09090b;
+    --accent-hover: #d4d4d8;
+    --success: #22c55e;
+    --danger: #ef4444;
+    --warning: #f59e0b;
+    --sakura: #f0a9c0;
+    --shadow-card: 0 1px 3px rgba(0,0,0,.4), 0 1px 2px rgba(0,0,0,.3);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme]) {
+      color-scheme: dark;
+      --bg-page: #0d0d10; --bg-card: #131316; --bg-hover: rgba(255,255,255,0.06);
+      --bg-sunken: #1a1a1f; --text-primary: #f4f4f5; --text-secondary: #d4d4d8;
+      --text-muted: #a1a1aa; --text-faint: #71717a; --border-faint: rgba(255,255,255,0.09);
+      --accent: #e4e4e7; --accent-text: #09090b; --accent-hover: #d4d4d8;
+      --success: #22c55e; --danger: #ef4444; --warning: #f59e0b; --sakura: #f0a9c0;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    font-family: var(--font-system);
+    background: var(--bg-page);
+    color: var(--text-primary);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+  }
+  #root { max-width: 1080px; margin: 0 auto; padding: 20px 18px 40px; }
+
+  /* Header */
+  .hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
+  .hdr .mark { width: 34px; height: 34px; color: var(--accent); flex: none; }
+  .hdr h1 { font-size: 19px; font-weight: 650; margin: 0; letter-spacing: -0.01em; }
+  .hdr .sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
+
+  /* Tabs */
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px;
+    border-bottom: 1px solid var(--border-faint); padding-bottom: 12px; }
+  .tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px;
+    border: 1px solid transparent; border-radius: var(--radius-sm); background: none;
+    color: var(--text-muted); font-family: inherit; font-size: 12.5px; font-weight: 550;
+    cursor: pointer; transition: transform .18s cubic-bezier(.23,1,.32,1), background-color .18s, color .18s, border-color .18s; }
+  .tab svg { width: 16px; height: 16px; }
+  .tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
+  .tab[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
+  .tab:not(:disabled):active { transform: scale(.97); }
+
+  /* Cards */
+  .grid { display: grid; gap: 14px; }
+  .grid.cols2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  .grid.cols3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+  .card { background: var(--bg-card); border: 1px solid var(--border-faint);
+    border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 16px 16px; }
+  .card h2 { font-size: 12px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em;
+    color: var(--text-muted); margin: 0 0 12px; display: flex; align-items: center; gap: 8px; }
+  .card h2 svg { width: 15px; height: 15px; }
+  .card .foot { margin-top: 12px; font-size: 11px; color: var(--text-faint); }
+
+  /* Buttons */
+  button.btn { border: none; border-radius: var(--radius-sm); background: var(--accent);
+    color: var(--accent-text); padding: 6px 14px; font-family: inherit; font-size: 12px;
+    font-weight: 600; cursor: pointer;
+    transition: transform .18s cubic-bezier(.23,1,.32,1), background-color .18s, opacity .18s; }
+  button.btn:not(:disabled):active { transform: scale(.97); transition-duration: 80ms; }
+  button.btn.sec { background: none; border: 1px solid var(--border-faint); color: var(--text-secondary); }
+  button.btn.sm { padding: 4px 10px; font-size: 11px; }
+  button.btn:disabled { opacity: .5; cursor: default; }
+  .iconbtn { border: 1px solid var(--border-faint); background: none; color: var(--text-secondary);
+    width: 30px; height: 30px; border-radius: var(--radius-sm); cursor: pointer; display: inline-flex;
+    align-items: center; justify-content: center; transition: transform .12s, background-color .18s; }
+  .iconbtn svg { width: 15px; height: 15px; }
+  .iconbtn:active { transform: scale(.94); }
+
+  input.fld, select.fld { width: 100%; padding: 7px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border-faint); background: var(--bg-sunken); color: var(--text-primary);
+    font-family: inherit; font-size: 13px; }
+  input.fld:focus, select.fld:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  label.lbl { display: block; font-size: 11px; color: var(--text-muted); margin: 0 0 4px; font-weight: 550; }
+
+  .kicker { font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--text-faint); }
+  .big { font-size: 40px; font-weight: 700; letter-spacing: -0.02em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .num { font-variant-numeric: tabular-nums; }
+  .muted { color: var(--text-muted); }
+  .faint { color: var(--text-faint); }
+  .jp { font-size: 12px; color: var(--text-muted); }
+  .row { display: flex; align-items: center; gap: 8px; }
+  .between { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+  .wrap { display: flex; flex-wrap: wrap; gap: 8px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; padding: 4px 10px; border-radius: 999px;
+    background: var(--bg-hover); color: var(--text-secondary); font-size: 11.5px; border: 1px solid transparent; cursor: pointer; }
+  .chip[aria-pressed="true"] { background: var(--accent); color: var(--accent-text); }
+  .chip.static { cursor: default; }
+
+  .listrow { display: flex; align-items: center; gap: 10px; padding: 8px 4px; border-top: 1px solid var(--border-faint); }
+  .listrow:first-of-type { border-top: none; }
+  .check { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--text-faint);
+    flex: none; display: inline-flex; align-items: center; justify-content: center; cursor: pointer; color: var(--accent-text); }
+  .check.on { background: var(--success); border-color: var(--success); }
+  .check svg { width: 13px; height: 13px; opacity: 0; }
+  .check.on svg { opacity: 1; }
+
+  .progress { height: 8px; border-radius: 999px; background: var(--bg-sunken); overflow: hidden; }
+  .progress > span { display: block; height: 100%; background: var(--accent); border-radius: 999px; transition: width .3s; }
+
+  table.tbl { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.tbl th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .03em; padding: 6px 8px; border-bottom: 1px solid var(--border-faint); }
+  table.tbl td { padding: 7px 8px; border-bottom: 1px solid var(--border-faint); vertical-align: top; }
+  .scrollx { overflow-x: auto; }
+
+  /* Prefecture passport (region-grouped tile grid — no raster) */
+  .region { margin-bottom: 12px; }
+  .region .rname { font-size: 11px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .pref-grid { display: flex; flex-wrap: wrap; gap: 6px; }
+  .pref { width: 62px; padding: 6px 4px; border-radius: var(--radius-sm); border: 1px solid var(--border-faint);
+    background: var(--bg-card); cursor: pointer; text-align: center; transition: transform .12s, background-color .2s, border-color .2s; }
+  .pref:active { transform: scale(.95); }
+  .pref .pc { font-size: 9px; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .pref .pn { font-size: 10.5px; font-weight: 550; color: var(--text-secondary); line-height: 1.15; }
+  .pref .pj { font-size: 9px; color: var(--text-faint); }
+  .pref.on { background: var(--accent); border-color: var(--accent); }
+  .pref.on .pc, .pref.on .pn, .pref.on .pj { color: var(--accent-text); }
+
+  .banner { padding: 10px 12px; border-radius: var(--radius-md); font-size: 12.5px; }
+  .banner.warn { background: rgba(180,83,9,.12); color: var(--warning); border: 1px solid rgba(180,83,9,.3); }
+  .banner.ok { background: rgba(22,163,74,.12); color: var(--success); border: 1px solid rgba(22,163,74,.3); }
+  .stat { display: flex; flex-direction: column; gap: 2px; }
+  .stat .v { font-size: 22px; font-weight: 680; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+  .stat .k { font-size: 11px; color: var(--text-muted); }
+  .divider { height: 1px; background: var(--border-faint); margin: 12px 0; }
+  .loading { color: var(--text-faint); font-size: 13px; padding: 24px 0; text-align: center; }
+  .spinner { width: 18px; height: 18px; border: 2px solid var(--border-faint); border-top-color: var(--accent);
+    border-radius: 50%; display: inline-block; animation: spin .7s linear infinite; vertical-align: middle; margin-right: 8px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+</style>
+</head>
+<body>
+<div id="root" aria-live="polite"></div>
+<script>
+"use strict";
+(function () {
+  // ---- bridge ------------------------------------------------------------
+  var ctx = { theme: null, locale: 'en', tripId: null, userId: null };
+  var pending = {}; var reqSeq = 0;
+
+  function post(msg) { window.parent.postMessage(msg, '*'); }
+  function invoke(sub, method, body) {
+    return new Promise(function (resolve, reject) {
+      var id = 'r' + (++reqSeq);
+      pending[id] = { resolve: resolve, reject: reject };
+      post({ type: 'trek:invoke', requestId: id, sub: sub, method: method || 'GET', body: body });
+    });
+  }
+  function notify(level, message) { post({ type: 'trek:notify', level: level, message: message }); }
+  function navigate(to) { post({ type: 'trek:navigate', to: to }); }
+
+  window.addEventListener('message', function (e) {
+    var m = e.data; if (!m || !m.type) return;
+    if (m.type === 'trek:context') { applyContext(m); return; }
+    if (m.type === 'trek:response' && pending[m.requestId]) {
+      pending[m.requestId].resolve(m.data); delete pending[m.requestId]; return;
+    }
+    if (m.type === 'trek:error' && pending[m.requestId]) {
+      var err = new Error(m.message || 'error'); err.code = m.code;
+      pending[m.requestId].reject(err); delete pending[m.requestId]; return;
+    }
+  });
+
+  // Robust theme resolution (context may omit theme; read several keys).
+  function resolveTheme(m) {
+    var keys = ['theme', 'colorScheme', 'appearance'];
+    for (var i = 0; i < keys.length; i++) {
+      var v = m && m[keys[i]];
+      if (v && typeof v === 'object') v = v.scheme || v.mode || v.name;
+      if (typeof v === 'string') {
+        var t = v.trim().toLowerCase();
+        if (t === 'dark' || t === 'light') return t;
+      }
+    }
+    return (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) ? 'dark' : 'light';
+  }
+  function applyContext(m) {
+    ctx.locale = (m.locale || 'en');
+    if (m.tripId != null) ctx.tripId = m.tripId;
+    if (m.userId != null) ctx.userId = m.userId;
+    var theme = resolveTheme(m);
+    ctx.theme = theme;
+    document.documentElement.dataset.theme = theme;
+    if (!booted) { booted = true; boot(); }
+    else { renderHeader(); if (current) openTab(current, true); }
+  }
+  // Follow OS theme until/unless the host tells us otherwise.
+  if (window.matchMedia) {
+    try {
+      window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', function (ev) {
+        if (!ctx.theme) document.documentElement.dataset.theme = ev.matches ? 'dark' : 'light';
+      });
+    } catch (_) {}
+  }
+
+  // ---- i18n --------------------------------------------------------------
+  function isDe() { return (ctx.locale || '').toLowerCase().indexOf('de') === 0; }
+  function T(en, de) { return isDe() ? de : en; }
+
+  // ---- icons (inline SVG only) ------------------------------------------
+  var ICON = {
+    compass: '<circle cx="12" cy="12" r="9"/><polygon points="16.2 7.8 13.4 13.4 7.8 16.2 10.6 10.6 16.2 7.8"/>',
+    countdown: '<circle cx="12" cy="13" r="8"/><path d="M12 9v4l2.5 2.5"/><path d="M9 2h6"/>',
+    book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M19 3v18"/>',
+    culture: '<path d="M3 9l9-5 9 5"/><path d="M5 9v10M19 9v10M9 9v10M15 9v10"/><path d="M3 19h18"/>',
+    yen: '<path d="M8 5l4 6 4-6"/><path d="M12 11v8"/><path d="M8 14h8M8 17h8"/>',
+    card: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18"/>',
+    food: '<path d="M5 3v8M8 3v8M6.5 11v10M5 7h3"/><path d="M17 3c-1.5 0-2.5 2-2.5 5s1 4 2.5 4 2.5-1 2.5-4S18.5 3 17 3z"/><path d="M17 12v9"/>',
+    season: '<circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M3 12h3M18 12h3M6 6l2 2M16 16l2 2M18 6l-2 2M8 16l-2 2"/>',
+    shield: '<path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/>',
+    settings: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1L9.5 22h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z"/>',
+    check: '<polyline points="20 6 9 17 4 12"/>',
+    star: '<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>',
+    plus: '<path d="M12 5v14M5 12h14"/>',
+    minus: '<path d="M5 12h14"/>',
+    search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
+    refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+    sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
+    wave: '<path d="M2 8c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/><path d="M2 14c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/>'
+  };
+  function svg(name, cls) {
+    return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" ' +
+      'stroke-linecap="round" stroke-linejoin="round"' + (cls ? ' class="' + cls + '"' : '') + '>' + (ICON[name] || '') + '</svg>';
+  }
+  function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, function (c) {
+    return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
+
+  // ---- formatting --------------------------------------------------------
+  function yen(n) { if (n == null || isNaN(n)) return '¥—'; return '¥' + Math.round(n).toLocaleString('en-US'); }
+  function home(n, sym) { if (n == null || isNaN(n)) return '—'; return (sym || '') + ' ' + n.toLocaleString(undefined, { maximumFractionDigits: 2 }); }
+  function ago(iso) {
+    if (!iso) return T('never', 'nie');
+    var t = Date.parse(iso); if (isNaN(t)) return '—';
+    var mins = Math.round((Date.now() - t) / 60000);
+    if (mins < 1) return T('just now', 'gerade eben');
+    if (mins < 60) return mins + ' min';
+    var h = Math.round(mins / 60); if (h < 24) return h + ' h';
+    return Math.round(h / 24) + ' d';
+  }
+  function mmdd(s) {
+    if (!s || s.indexOf('-') < 0) return s || '';
+    var p = s.split('-'); var mo = parseInt(p[0], 10);
+    var names = isDe()
+      ? ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez']
+      : ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return (names[mo - 1] || '?') + ' ' + parseInt(p[1], 10);
+  }
+  function monthName(m) {
+    var names = isDe()
+      ? ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez']
+      : ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    return names[m - 1] || '?';
+  }
+  // WMO weather code -> label
+  function wcode(c) {
+    var map = {
+      0: T('Clear', 'Klar'), 1: T('Mainly clear', 'Meist klar'), 2: T('Partly cloudy', 'Teils bewölkt'),
+      3: T('Overcast', 'Bedeckt'), 45: T('Fog', 'Nebel'), 48: T('Rime fog', 'Reifnebel'),
+      51: T('Light drizzle', 'Leichter Niesel'), 53: T('Drizzle', 'Niesel'), 55: T('Heavy drizzle', 'Starker Niesel'),
+      61: T('Light rain', 'Leichter Regen'), 63: T('Rain', 'Regen'), 65: T('Heavy rain', 'Starker Regen'),
+      71: T('Light snow', 'Leichter Schnee'), 73: T('Snow', 'Schnee'), 75: T('Heavy snow', 'Starker Schnee'),
+      80: T('Showers', 'Schauer'), 81: T('Showers', 'Schauer'), 82: T('Violent showers', 'Heftige Schauer'),
+      95: T('Thunderstorm', 'Gewitter'), 96: T('Thunderstorm', 'Gewitter'), 99: T('Thunderstorm', 'Gewitter')
+    };
+    return map[c] != null ? map[c] : ('#' + c);
+  }
+
+  // ---- DOM helpers -------------------------------------------------------
+  var root = document.getElementById('root');
+  var booted = false, current = null;
+  var sectionCache = {};
+
+  function reportHeight() {
+    var h = Math.ceil(document.body.getBoundingClientRect().height) + 4;
+    post({ type: 'trek:resize', height: Math.min(h, 2000) });
+  }
+  if (window.ResizeObserver) { try { new ResizeObserver(reportHeight).observe(document.body); } catch (_) {} }
+
+  var TABS = [
+    { id: 'countdown', icon: 'countdown', en: 'Countdown', de: 'Countdown' },
+    { id: 'nihongo', icon: 'book', en: 'Language', de: 'Sprache' },
+    { id: 'culture', icon: 'culture', en: 'Culture', de: 'Kultur' },
+    { id: 'budget', icon: 'yen', en: 'Budget', de: 'Budget' },
+    { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte' },
+    { id: 'food', icon: 'food', en: 'Food', de: 'Food' },
+    { id: 'season', icon: 'season', en: 'Season', de: 'Saison' },
+    { id: 'safety', icon: 'shield', en: 'Safety', de: 'Sicherheit' },
+    { id: 'settings', icon: 'settings', en: 'Settings', de: 'Einstellungen' }
+  ];
+
+  function boot() {
+    root.innerHTML = '';
+    var hdr = document.createElement('div'); hdr.id = 'hdr'; root.appendChild(hdr);
+    var tabs = document.createElement('div'); tabs.className = 'tabs'; tabs.id = 'tabs'; root.appendChild(tabs);
+    var panel = document.createElement('div'); panel.id = 'panel'; root.appendChild(panel);
+    renderHeader(); renderTabs();
+    var initial = (location.hash || '').replace('#', '');
+    openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'countdown');
+  }
+  function renderHeader() {
+    var hdr = document.getElementById('hdr'); if (!hdr) return;
+    hdr.className = 'hdr';
+    hdr.innerHTML =
+      '<span class="mark">' + svg('compass') + '</span>' +
+      '<div><h1>TREK × Japan</h1><div class="sub">' +
+      T('Your Japan trip hub — prep and on the ground', 'Dein Japan-Reise-Hub — Vorbereitung und vor Ort') +
+      '</div></div>';
+  }
+  function renderTabs() {
+    var tabs = document.getElementById('tabs'); tabs.innerHTML = '';
+    TABS.forEach(function (t) {
+      var b = document.createElement('button');
+      b.className = 'tab'; b.type = 'button';
+      b.setAttribute('role', 'tab');
+      b.setAttribute('aria-selected', current === t.id ? 'true' : 'false');
+      b.innerHTML = svg(t.icon) + '<span>' + esc(T(t.en, t.de)) + '</span>';
+      b.onclick = function () { openTab(t.id); };
+      tabs.appendChild(b);
+    });
+  }
+
+  function openTab(id, force) {
+    current = id;
+    var tabs = document.getElementById('tabs').children;
+    for (var i = 0; i < tabs.length; i++) tabs[i].setAttribute('aria-selected', TABS[i].id === id ? 'true' : 'false');
+    var panel = document.getElementById('panel');
+    panel.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Loading…', 'Lädt…') + '</div>';
+    reportHeight();
+    var fn = SECTIONS[id];
+    Promise.resolve(fn(panel, force)).then(reportHeight).catch(function (e) {
+      panel.innerHTML = '<div class="card"><div class="banner warn">' +
+        T('Could not load this section: ', 'Abschnitt konnte nicht geladen werden: ') + esc(e && e.message) + '</div></div>';
+      reportHeight();
+    });
+  }
+
+  // =======================================================================
+  // Sections
+  // =======================================================================
+  var SECTIONS = {};
+
+  // ---- 1. Countdown & checklist -----------------------------------------
+  SECTIONS.countdown = function (panel) {
+    return invoke('/checklist', 'GET').then(function (d) {
+      var trip = d.trip || {};
+      var days = trip.days_until_start;
+      var countHtml;
+      if (days == null) {
+        countHtml = '<div class="muted">' + T('Set a trip date in Settings, or link a TREK trip.',
+          'Setze ein Reisedatum in den Einstellungen oder verknüpfe eine TREK-Reise.') + '</div>';
+      } else if (days > 0) {
+        countHtml = '<div class="big">' + days + '</div><div class="kicker">' + T('days to departure', 'Tage bis Abreise') + '</div>';
+      } else if (days === 0) {
+        countHtml = '<div class="big">' + T('Today', 'Heute') + '</div><div class="kicker">' + T('departure day', 'Abreisetag') + '</div>';
+      } else if (trip.days_until_end != null && trip.days_until_end >= 0) {
+        countHtml = '<div class="big">' + T('In Japan', 'In Japan') + '</div><div class="kicker">' +
+          (trip.days_until_end) + ' ' + T('days left', 'Tage übrig') + '</div>';
+      } else {
+        countHtml = '<div class="big">お帰り</div><div class="kicker">' + T('trip complete', 'Reise beendet') + '</div>';
+      }
+      var srcLabel = trip.source === 'trek'
+        ? T('from linked TREK trip', 'aus verknüpfter TREK-Reise')
+        : T('from your trip dates', 'aus deinen Reisedaten');
+      var tripLine = (trip.start ? esc(trip.start) : '—') + (trip.end ? ' → ' + esc(trip.end) : '') +
+        (trip.title ? ' · ' + esc(trip.title) : '');
+
+      var groups = {};
+      d.items.forEach(function (it) { (groups[it.group] = groups[it.group] || []).push(it); });
+      var gnames = { docs: T('Documents', 'Dokumente'), connectivity: T('Connectivity', 'Verbindung'),
+        money: T('Money', 'Geld'), gear: T('Gear', 'Ausrüstung') };
+      var pct = d.total ? Math.round(d.done / d.total * 100) : 0;
+
+      var listHtml = Object.keys(groups).map(function (g) {
+        return '<div class="kicker" style="margin:12px 0 4px">' + esc(gnames[g] || g) + '</div>' +
+          groups[g].map(function (it) {
+            return '<div class="listrow"><span class="check' + (it.done ? ' on' : '') + '" data-id="' + esc(it.id) + '">' +
+              svg('check') + '</span><span>' + esc(T(it.en, it.de)) + '</span></div>';
+          }).join('');
+      }).join('');
+
+      panel.innerHTML =
+        '<div class="grid cols2">' +
+          '<div class="card"><h2>' + svg('countdown') + T('Countdown', 'Countdown') + '</h2>' +
+            countHtml +
+            '<div class="divider"></div>' +
+            '<div class="muted" style="font-size:12px">' + esc(tripLine) + '</div>' +
+            '<div class="faint" style="font-size:11px;margin-top:2px">' + esc(srcLabel) + '</div>' +
+          '</div>' +
+          '<div class="card"><h2>' + svg('check') + T('Prep & packing', 'Vorbereitung & Packen') + '</h2>' +
+            '<div class="between" style="margin-bottom:8px"><span class="num">' + d.done + ' / ' + d.total + '</span>' +
+            '<span class="faint">' + pct + '%</span></div>' +
+            '<div class="progress"><span style="width:' + pct + '%"></span></div>' +
+            '<div id="checklist">' + listHtml + '</div>' +
+          '</div>' +
+        '</div>';
+
+      panel.querySelectorAll('.check').forEach(function (el) {
+        el.onclick = function () {
+          var id = el.getAttribute('data-id');
+          invoke('/checklist/toggle', 'POST', { item_id: id }).then(function () { openTab('countdown', true); })
+            .catch(function (e) { notify('error', e.message); });
+        };
+      });
+    });
+  };
+
+  // ---- 2. Nihongo --------------------------------------------------------
+  var nihongoState = { cat: 'all', favOnly: false };
+  SECTIONS.nihongo = function (panel) {
+    return invoke('/nihongo/state', 'GET').then(function (d) {
+      sectionCache.nihongo = d;
+      renderNihongo(panel, d);
+    });
+  };
+  function renderNihongo(panel, d) {
+    var favSet = {}; d.favorites.forEach(function (f) { favSet[f] = true; });
+    var pod = d.phrase_of_day;
+    var cats = ['all'].concat(d.categories);
+    var catChips = cats.map(function (c) {
+      return '<button class="chip" data-cat="' + esc(c) + '" aria-pressed="' + (nihongoState.cat === c ? 'true' : 'false') + '">' +
+        esc(c === 'all' ? T('All', 'Alle') : c) + '</button>';
+    }).join('');
+
+    var list = d.phrases.filter(function (p) {
+      if (nihongoState.cat !== 'all' && p.category !== nihongoState.cat) return false;
+      if (nihongoState.favOnly && !favSet[p.id]) return false;
+      return true;
+    });
+    var rows = list.map(function (p) {
+      return '<div class="listrow" style="align-items:flex-start">' +
+        '<span class="check" style="border:none;background:none;width:24px" data-fav="' + esc(p.id) + '">' +
+          '<span style="color:' + (favSet[p.id] ? 'var(--warning)' : 'var(--text-faint)') + '">' + svg('star') + '</span></span>' +
+        '<div style="flex:1"><div><b>' + esc(p.jp) + '</b> <span class="jp">' + esc(p.romaji) + '</span></div>' +
+        '<div class="muted" style="font-size:12.5px">' + esc(T(p.en, p.de)) + '</div>' +
+        '<div class="faint" style="font-size:11px">' + esc(p.kana) + ' · ' + esc(p.category) + '</div></div></div>';
+    }).join('') || '<div class="loading">' + T('No phrases match.', 'Keine Phrasen gefunden.') + '</div>';
+
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('book') + T('Phrase of the day', 'Phrase des Tages') + '</h2>' +
+          '<div style="font-size:24px;font-weight:650">' + esc(pod.jp) + '</div>' +
+          '<div class="jp" style="font-size:14px;margin-top:2px">' + esc(pod.romaji) + ' · ' + esc(pod.kana) + '</div>' +
+          '<div style="margin-top:8px">' + esc(T(pod.en, pod.de)) + '</div>' +
+          '<div class="row" style="margin-top:14px"><button class="btn sec sm" id="pod-next">' + svg('refresh') + ' ' + T('Next', 'Nächste') + '</button>' +
+          '<button class="btn sm" id="pod-fav" data-fav="' + esc(pod.id) + '">' + (favSet[pod.id] ? T('Saved', 'Gespeichert') : T('Save', 'Merken')) + '</button></div>' +
+        '</div>' +
+        '<div class="card"><h2>' + svg('search') + T('Phrasebook', 'Phrasenbuch') + '</h2>' +
+          '<div class="wrap" style="margin-bottom:8px">' + catChips + '</div>' +
+          '<button class="chip" id="favonly" aria-pressed="' + (nihongoState.favOnly ? 'true' : 'false') + '">' + svg('star') + ' ' + T('Favorites', 'Favoriten') + '</button>' +
+          '<div class="divider"></div>' +
+          '<div style="max-height:420px;overflow:auto">' + rows + '</div>' +
+        '</div>' +
+      '</div>';
+
+    panel.querySelector('#pod-next').onclick = function () {
+      invoke('/nihongo/next', 'POST', {}).then(function (r) { d.phrase_of_day = r.phrase_of_day; renderNihongo(panel, d); reportHeight(); });
+    };
+    panel.querySelector('#pod-fav').onclick = function (e) { toggleFav(e.currentTarget.getAttribute('data-fav'), d, panel); };
+    panel.querySelectorAll('[data-cat]').forEach(function (b) {
+      b.onclick = function () { nihongoState.cat = b.getAttribute('data-cat'); renderNihongo(panel, d); reportHeight(); };
+    });
+    panel.querySelector('#favonly').onclick = function () { nihongoState.favOnly = !nihongoState.favOnly; renderNihongo(panel, d); reportHeight(); };
+    panel.querySelectorAll('[data-fav]').forEach(function (b) {
+      if (b.id === 'pod-fav') return;
+      b.onclick = function () { toggleFav(b.getAttribute('data-fav'), d, panel); };
+    });
+  }
+  function toggleFav(pid, d, panel) {
+    invoke('/nihongo/favorite', 'POST', { phrase_id: pid }).then(function (r) {
+      d.favorites = d.favorites.filter(function (x) { return x !== pid; });
+      if (r.favorite) d.favorites.push(pid);
+      renderNihongo(panel, d); reportHeight();
+    }).catch(function (e) { notify('error', e.message); });
+  }
+
+  // ---- 3. Culture & gomi -------------------------------------------------
+  var cultureState = { cat: 'all', q: '' };
+  SECTIONS.culture = function (panel) {
+    return Promise.all([invoke('/etiquette', 'GET'), invoke('/gomi?q=' + encodeURIComponent(cultureState.q), 'GET')])
+      .then(function (res) { sectionCache.culture = { et: res[0], gomi: res[1] }; renderCulture(panel); });
+  };
+  function renderCulture(panel) {
+    var et = sectionCache.culture.et, gomi = sectionCache.culture.gomi;
+    var cats = ['all'].concat(et.categories);
+    var chips = cats.map(function (c) {
+      return '<button class="chip" data-ecat="' + esc(c) + '" aria-pressed="' + (cultureState.cat === c ? 'true' : 'false') + '">' +
+        esc(c === 'all' ? T('All', 'Alle') : c) + '</button>';
+    }).join('');
+    var cards = et.items.filter(function (i) { return cultureState.cat === 'all' || i.category === cultureState.cat; })
+      .map(function (i) {
+        return '<div style="padding:10px 0;border-top:1px solid var(--border-faint)">' +
+          '<div class="between"><b>' + esc(T(i.title_en, i.title_de)) + '</b>' +
+          '<span class="chip static">' + esc(i.category) + '</span></div>' +
+          '<div class="muted" style="font-size:12.5px;margin-top:3px">' + esc(T(i.body_en, i.body_de)) + '</div></div>';
+      }).join('');
+
+    var gomiRows = gomi.items.map(function (g) {
+      return '<tr><td><b>' + esc(T(g.item_en, g.item_de)) + '</b></td>' +
+        '<td>' + esc(T(g.bin_en, g.bin_de)) + '</td>' +
+        '<td class="faint">' + esc(g.note || '') + '</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="faint">' + T('No match', 'Kein Treffer') + '</td></tr>';
+
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('culture') + T('Etiquette', 'Etikette') + '</h2>' +
+          '<div class="wrap">' + chips + '</div>' + cards + '</div>' +
+        '<div class="card"><h2>' + svg('search') + T('Gomi — garbage sorting', 'Gomi — Mülltrennung') + '</h2>' +
+          '<input class="fld" id="gomi-q" placeholder="' + T('Search item (e.g. bottle)', 'Gegenstand suchen (z.B. Flasche)') + '" value="' + esc(cultureState.q) + '" />' +
+          '<div class="scrollx" style="margin-top:10px"><table class="tbl"><thead><tr><th>' + T('Item', 'Gegenstand') + '</th><th>' + T('Bin', 'Tonne') + '</th><th>' + T('Note', 'Hinweis') + '</th></tr></thead>' +
+          '<tbody>' + gomiRows + '</tbody></table></div></div>' +
+      '</div>';
+
+    panel.querySelectorAll('[data-ecat]').forEach(function (b) {
+      b.onclick = function () { cultureState.cat = b.getAttribute('data-ecat'); renderCulture(panel); reportHeight(); };
+    });
+    var qi = panel.querySelector('#gomi-q'); var tmr;
+    qi.oninput = function () {
+      clearTimeout(tmr); tmr = setTimeout(function () {
+        cultureState.q = qi.value;
+        invoke('/gomi?q=' + encodeURIComponent(cultureState.q), 'GET').then(function (r) {
+          sectionCache.culture.gomi = r; renderCulture(panel); reportHeight();
+          var nq = panel.querySelector('#gomi-q'); nq.focus(); nq.setSelectionRange(nq.value.length, nq.value.length);
+        });
+      }, 220);
+    };
+  }
+
+  // ---- 4. Budget ---------------------------------------------------------
+  SECTIONS.budget = function (panel) {
+    return invoke('/budget/state', 'GET').then(function (d) { renderBudget(panel, d); });
+  };
+  function renderBudget(panel, d) {
+    var sym = d.currency_symbol;
+    var overspent = d.remaining_yen < 0;
+    var spendRows = (d.spends || []).map(function (s) {
+      return '<tr><td class="num">' + yen(s.amount_yen) + '</td><td>' + esc(s.note || '') + '</td><td class="faint">' + ago(s.at) + '</td></tr>';
+    }).join('') || '<tr><td colspan="3" class="faint">' + T('No expenses yet', 'Noch keine Ausgaben') + '</td></tr>';
+    var fxLine = d.rate != null
+      ? ('1000 ¥ ≈ ' + home(1000 * d.rate, sym) + ' · ' + T('updated', 'aktualisiert') + ' ' + ago(d.fx_fetched_at))
+      : T('FX rate unavailable', 'Kurs nicht verfügbar');
+
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('yen') + T('Budget', 'Budget') + '</h2>' +
+          '<div class="grid cols3" style="gap:10px">' +
+            '<div class="stat"><span class="v">' + yen(d.planned_yen) + '</span><span class="k">' + T('planned', 'geplant') + (d.planned_home != null ? ' · ' + home(d.planned_home, sym) : '') + '</span></div>' +
+            '<div class="stat"><span class="v">' + yen(d.spent_yen) + '</span><span class="k">' + T('spent', 'ausgegeben') + '</span></div>' +
+            '<div class="stat"><span class="v" style="color:' + (overspent ? 'var(--danger)' : 'var(--success)') + '">' + yen(d.remaining_yen) + '</span><span class="k">' + T('remaining', 'Rest') + '</span></div>' +
+          '</div>' +
+          '<div class="foot">' + esc(fxLine) + '</div>' +
+          '<div class="divider"></div>' +
+          '<label class="lbl">' + T('Set planned budget (¥)', 'Geplantes Budget setzen (¥)') + '</label>' +
+          '<div class="row"><input class="fld" id="plan" type="number" min="0" value="' + (d.planned_yen || '') + '" /><button class="btn" id="plan-save">' + T('Save', 'Speichern') + '</button></div>' +
+        '</div>' +
+        '<div class="card"><h2>' + svg('plus') + T('Log expense', 'Ausgabe erfassen') + '</h2>' +
+          '<div class="row"><input class="fld" id="sp-amt" type="number" placeholder="¥" style="max-width:120px" />' +
+          '<input class="fld" id="sp-note" placeholder="' + T('note (e.g. lunch)', 'Notiz (z.B. Mittagessen)') + '" />' +
+          '<button class="btn" id="sp-add">' + svg('plus') + '</button></div>' +
+          '<div class="scrollx" style="margin-top:12px;max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Note', 'Notiz') + '</th><th></th></tr></thead><tbody>' + spendRows + '</tbody></table></div>' +
+        '</div>' +
+      '</div>';
+
+    panel.querySelector('#plan-save').onclick = function () {
+      invoke('/budget/plan', 'POST', { planned_yen: panel.querySelector('#plan').value }).then(function () {
+        notify('success', T('Budget saved', 'Budget gespeichert')); openTab('budget', true);
+      });
+    };
+    panel.querySelector('#sp-add').onclick = function () {
+      var amt = panel.querySelector('#sp-amt').value;
+      if (!amt) { notify('warning', T('Enter an amount', 'Betrag eingeben')); return; }
+      invoke('/budget/spend', 'POST', { amount_yen: amt, note: panel.querySelector('#sp-note').value }).then(function () { openTab('budget', true); });
+    };
+  }
+
+  // ---- 5. IC card --------------------------------------------------------
+  SECTIONS.ic = function (panel) {
+    return invoke('/ic/state', 'GET').then(function (d) { renderIc(panel, d); });
+  };
+  function renderIc(panel, d) {
+    var ledgerRows = (d.ledger || []).map(function (l) {
+      var kindLabel = { charge: T('Charge', 'Aufladen'), spend: T('Spend', 'Ausgabe'), set: T('Set', 'Gesetzt') }[l.kind] || l.kind;
+      return '<tr><td>' + esc(kindLabel) + '</td><td class="num">' + (l.kind === 'spend' ? '−' : '') + yen(l.amount) + '</td><td class="num">' + yen(l.balance_after) + '</td><td class="faint">' + ago(l.at) + '</td></tr>';
+    }).join('') || '<tr><td colspan="4" class="faint">' + T('No transactions', 'Keine Buchungen') + '</td></tr>';
+
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('card') + (d.card ? esc(d.card) : T('IC card', 'IC-Karte')) + '</h2>' +
+          '<div class="big">' + yen(d.yen) + '</div><div class="kicker">' + T('balance', 'Guthaben') + ' · ' + ago(d.updated_at) + '</div>' +
+          (d.low ? '<div class="banner warn" style="margin-top:12px">' + svg('card') + ' ' + T('Low balance — below', 'Niedriges Guthaben — unter') + ' ' + yen(d.low_threshold) + '</div>'
+                 : '<div class="banner ok" style="margin-top:12px">' + T('Balance OK', 'Guthaben OK') + '</div>') +
+          '<div class="divider"></div>' +
+          '<div class="row"><input class="fld" id="ic-amt" type="number" placeholder="¥" style="max-width:120px" />' +
+            '<button class="btn" id="ic-charge">' + svg('plus') + ' ' + T('Charge', 'Aufladen') + '</button>' +
+            '<button class="btn sec" id="ic-spend">' + svg('minus') + ' ' + T('Spend', 'Ausgeben') + '</button></div>' +
+          '<div class="row" style="margin-top:8px"><input class="fld" id="ic-set" type="number" placeholder="' + T('set exact balance', 'exaktes Guthaben setzen') + '" style="max-width:160px" />' +
+            '<button class="btn sec sm" id="ic-setbtn">' + T('Set', 'Setzen') + '</button></div>' +
+        '</div>' +
+        '<div class="card"><h2>' + svg('refresh') + T('History', 'Verlauf') + '</h2>' +
+          '<div class="scrollx" style="max-height:360px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('Type', 'Typ') + '</th><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Balance', 'Stand') + '</th><th></th></tr></thead><tbody>' + ledgerRows + '</tbody></table></div>' +
+        '</div>' +
+      '</div>';
+
+    function amt() { return panel.querySelector('#ic-amt').value; }
+    panel.querySelector('#ic-charge').onclick = function () {
+      if (!amt()) return notify('warning', T('Enter an amount', 'Betrag eingeben'));
+      invoke('/ic/charge', 'POST', { amount: amt() }).then(function () { openTab('ic', true); });
+    };
+    panel.querySelector('#ic-spend').onclick = function () {
+      if (!amt()) return notify('warning', T('Enter an amount', 'Betrag eingeben'));
+      invoke('/ic/spend', 'POST', { amount: amt() }).then(function (r) {
+        if (r.yen < d.low_threshold) notify('warning', T('IC balance is low', 'IC-Guthaben ist niedrig'));
+        openTab('ic', true);
+      });
+    };
+    panel.querySelector('#ic-setbtn').onclick = function () {
+      invoke('/ic/set', 'POST', { yen: panel.querySelector('#ic-set').value }).then(function () { openTab('ic', true); });
+    };
+  }
+
+  // ---- 6. Food & collect -------------------------------------------------
+  var FOOD_KINDS = [
+    { k: 'famichiki', en: 'Famichiki', de: 'Famichiki' },
+    { k: 'konbini', en: 'Konbini stop', de: 'Konbini-Stopp' },
+    { k: 'ramen', en: 'Ramen', de: 'Ramen' },
+    { k: 'sushi', en: 'Kaiten sushi', de: 'Kaiten-Sushi' },
+    { k: 'gyoza', en: 'Gyoza', de: 'Gyoza' },
+    { k: 'matcha', en: 'Matcha', de: 'Matcha' }
+  ];
+  var COLLECT_KINDS = [
+    { k: 'onsen', en: 'Onsen', de: 'Onsen' },
+    { k: 'goshuin', en: 'Goshuin', de: 'Goshuin' },
+    { k: 'eki-stamp', en: 'Eki stamps', de: 'Eki-Stempel' }
+  ];
+  var REGION_ORDER = ['Hokkaido', 'Tohoku', 'Kanto', 'Chubu', 'Kansai', 'Chugoku', 'Shikoku', 'Kyushu', 'Okinawa'];
+
+  SECTIONS.food = function (panel) {
+    return invoke('/collect/state', 'GET').then(function (d) { renderFood(panel, d); });
+  };
+  function renderFood(panel, d) {
+    var foodCards = FOOD_KINDS.map(function (f) {
+      var c = d.food[f.k] || 0;
+      return '<div class="card" style="padding:12px"><div class="between"><div class="stat"><span class="v">' + c + '</span><span class="k">' + esc(T(f.en, f.de)) + '</span></div>' +
+        '<div class="row"><button class="iconbtn" data-food="' + f.k + '" data-delta="-1">' + svg('minus') + '</button>' +
+        '<button class="iconbtn" data-food="' + f.k + '" data-delta="1">' + svg('plus') + '</button></div></div></div>';
+    }).join('');
+
+    var visitedSet = {}; d.visited.forEach(function (v) { visitedSet[v] = true; });
+    var byRegion = {};
+    d.prefectures.forEach(function (p) { (byRegion[p.region] = byRegion[p.region] || []).push(p); });
+    var mapHtml = REGION_ORDER.filter(function (r) { return byRegion[r]; }).map(function (r) {
+      var tiles = byRegion[r].map(function (p) {
+        return '<div class="pref' + (visitedSet[p.code] ? ' on' : '') + '" data-pref="' + esc(p.code) + '" title="' + esc(p.romaji) + '">' +
+          '<div class="pc">' + esc(p.code.replace('JP-', '')) + '</div>' +
+          '<div class="pn">' + esc(p.name) + '</div>' +
+          '<div class="pj">' + esc(p.jp) + '</div></div>';
+      }).join('');
+      return '<div class="region"><div class="rname">' + esc(r) + '</div><div class="pref-grid">' + tiles + '</div></div>';
+    }).join('');
+
+    var collectHtml = COLLECT_KINDS.map(function (c) {
+      var items = (d.collections[c.k] || []);
+      var chips = items.map(function (it) {
+        return '<span class="chip static" data-col="' + c.k + '" data-key="' + esc(it.key) + '">' + esc(it.key) + '</span>';
+      }).join('') || '<span class="faint" style="font-size:12px">' + T('none yet', 'noch keine') + '</span>';
+      return '<div style="margin-bottom:12px"><div class="between" style="margin-bottom:6px"><span class="kicker">' + esc(T(c.en, c.de)) + ' (' + items.length + ')</span></div>' +
+        '<div class="row" style="margin-bottom:6px"><input class="fld col-in" data-kind="' + c.k + '" placeholder="' + T('add name…', 'Name hinzufügen…') + '" />' +
+        '<button class="btn sm col-add" data-kind="' + c.k + '">' + svg('plus') + '</button></div>' +
+        '<div class="wrap">' + chips + '</div></div>';
+    }).join('');
+
+    panel.innerHTML =
+      '<div class="card"><h2>' + svg('compass') + T('Prefecture passport', 'Präfektur-Pass') + ' · ' + d.visited.length + '/' + d.prefectures.length + '</h2>' +
+        '<div style="max-height:560px;overflow:auto">' + mapHtml + '</div></div>' +
+      '<div class="grid cols2" style="margin-top:14px">' +
+        '<div class="card"><h2>' + svg('food') + T('Food tally', 'Food-Zähler') + '</h2><div class="grid cols3">' + foodCards + '</div></div>' +
+        '<div class="card"><h2>' + svg('star') + T('Collections', 'Sammlungen') + '</h2>' + collectHtml + '</div>' +
+      '</div>';
+
+    panel.querySelectorAll('[data-food]').forEach(function (b) {
+      b.onclick = function () {
+        invoke('/food/inc', 'POST', { kind: b.getAttribute('data-food'), delta: parseInt(b.getAttribute('data-delta'), 10) })
+          .then(function () { openTab('food', true); });
+      };
+    });
+    panel.querySelectorAll('[data-pref]').forEach(function (b) {
+      b.onclick = function () {
+        invoke('/prefectures/toggle', 'POST', { code: b.getAttribute('data-pref') }).then(function () { openTab('food', true); });
+      };
+    });
+    panel.querySelectorAll('.col-add').forEach(function (b) {
+      b.onclick = function () {
+        var kind = b.getAttribute('data-kind');
+        var inp = panel.querySelector('.col-in[data-kind="' + kind + '"]');
+        if (!inp.value.trim()) return;
+        invoke('/collect/add', 'POST', { kind: kind, key: inp.value.trim() }).then(function () { openTab('food', true); });
+      };
+    });
+    panel.querySelectorAll('[data-col]').forEach(function (chip) {
+      chip.style.cursor = 'pointer'; chip.title = T('remove', 'entfernen');
+      chip.onclick = function () {
+        invoke('/collect/add', 'POST', { kind: chip.getAttribute('data-col'), key: chip.getAttribute('data-key') }).then(function () { openTab('food', true); });
+      };
+    });
+  }
+
+  // ---- 7. Season ---------------------------------------------------------
+  SECTIONS.season = function (panel) {
+    return invoke('/season', 'GET').then(function (d) {
+      var months = d.trip_months;
+      var sakuraRows = d.sakura.map(function (s) {
+        return '<tr><td><b>' + esc(s.city) + '</b> <span class="faint">' + esc(s.prefecture_code.replace('JP-', '')) + '</span></td>' +
+          '<td><span style="color:var(--sakura)">' + svg('season') + '</span> ' + mmdd(s.sakura_avg) + '</td>' +
+          '<td>' + mmdd(s.koyo_avg) + '</td></tr>';
+      }).join('');
+
+      var matsuriCards = d.matsuri.slice(0, 40).map(function (m) {
+        var tags = '';
+        if (m.in_window) tags += '<span class="chip static" style="background:var(--accent);color:var(--accent-text)">' + T('in your dates', 'in deinem Zeitraum') + '</span>';
+        if (m.nearby) tags += '<span class="chip static">' + T('nearby', 'in der Nähe') + '</span>';
+        return '<div style="padding:9px 0;border-top:1px solid var(--border-faint)">' +
+          '<div class="between"><div><b>' + esc(m.name) + '</b> <span class="jp">' + esc(m.name_jp) + '</span></div>' +
+          '<span class="faint">' + monthName(m.month) + '</span></div>' +
+          '<div class="muted" style="font-size:12px">' + esc(m.city) + ' · ' + esc(T(m.blurb_en, m.blurb_de)) + '</div>' +
+          (tags ? '<div class="wrap" style="margin-top:5px">' + tags + '</div>' : '') + '</div>';
+      }).join('');
+
+      var windowLine = months
+        ? T('Showing events during: ', 'Events im Zeitraum: ') + months.map(monthName).join(', ')
+        : T('Set trip dates in Settings to highlight events in your window.', 'Setze Reisedaten in den Einstellungen, um Events hervorzuheben.');
+
+      panel.innerHTML =
+        '<div class="grid cols2">' +
+          '<div class="card"><h2>' + svg('season') + T('Sakura & koyo', 'Sakura & Kōyō') + '</h2>' +
+            '<div class="scrollx" style="max-height:520px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura', 'Sakura') + '</th><th>' + T('Koyo', 'Kōyō') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
+          '<div class="card"><h2>' + svg('season') + T('Matsuri & hanabi', 'Matsuri & Hanabi') + '</h2>' +
+            '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + '</div>' +
+            '<div style="max-height:500px;overflow:auto">' + matsuriCards + '</div></div>' +
+        '</div>';
+    });
+  };
+
+  // ---- 8. Safety & weather ----------------------------------------------
+  SECTIONS.safety = function (panel) {
+    return invoke('/safety', 'GET').then(function (d) {
+      var loc = d.location || {};
+      var w = d.weather;
+      var weatherHtml;
+      if (!w) {
+        weatherHtml = '<div class="muted">' + T('Set weather latitude & longitude in Settings.', 'Setze Wetter-Breiten-/Längengrad in den Einstellungen.') + '</div>';
+      } else {
+        var cur = w.current || {};
+        var days = (w.daily || []).map(function (dd) {
+          return '<div class="stat" style="min-width:78px"><span class="k">' + esc(dd.date ? dd.date.slice(5) : '') + '</span>' +
+            '<span class="v" style="font-size:15px">' + (dd.tmax != null ? Math.round(dd.tmax) + '°' : '—') + '<span class="faint" style="font-size:12px"> / ' + (dd.tmin != null ? Math.round(dd.tmin) + '°' : '—') + '</span></span>' +
+            '<span class="k">' + esc(wcode(dd.code)) + (dd.pop != null ? ' · ' + dd.pop + '%' : '') + '</span></div>';
+        }).join('');
+        weatherHtml =
+          '<div class="row"><span style="color:var(--warning)">' + svg('sun') + '</span>' +
+          '<span class="big" style="font-size:32px">' + (cur.temp != null ? Math.round(cur.temp) + '°' : '—') + '</span>' +
+          '<div><div>' + esc(wcode(cur.code)) + '</div><div class="faint">' + (cur.humidity != null ? cur.humidity + '% · ' : '') + (cur.wind != null ? cur.wind + ' km/h' : '') + '</div></div></div>' +
+          '<div class="wrap" style="margin-top:12px">' + days + '</div>';
+      }
+      var locLabel = loc.city ? esc(loc.city) : (loc.lat != null ? loc.lat.toFixed(2) + ', ' + loc.lon.toFixed(2) : T('not set', 'nicht gesetzt'));
+
+      var quakeRows = (d.quakes || []).slice(0, 10).map(function (q) {
+        return '<tr><td class="num"><b>M ' + (q.mag != null ? q.mag : '—') + '</b></td>' +
+          '<td>' + esc(q.place || '') + '</td>' +
+          '<td class="faint">' + (q.intensity ? T('int. ', 'Int. ') + esc(q.intensity) : '') + '</td>' +
+          '<td class="faint">' + esc((q.time || '').replace('T', ' ').slice(0, 16)) + '</td></tr>';
+      }).join('') || '<tr><td colspan="4" class="faint">' + T('No recent quakes / data unavailable', 'Keine aktuellen Beben / keine Daten') + '</td></tr>';
+
+      var emg = (d.emergency || []).map(function (p) {
+        return '<div class="listrow" style="align-items:flex-start"><div style="flex:1"><b>' + esc(p.jp) + '</b> <span class="jp">' + esc(p.romaji) + '</span>' +
+          '<div class="muted" style="font-size:12px">' + esc(T(p.en, p.de)) + '</div></div></div>';
+      }).join('');
+
+      panel.innerHTML =
+        '<div class="grid cols2">' +
+          '<div class="card"><h2>' + svg('sun') + T('Weather', 'Wetter') + ' · ' + locLabel + '</h2>' + weatherHtml +
+            '<div class="foot">' + T('Open-Meteo · updated', 'Open-Meteo · aktualisiert') + ' ' + ago(d.weather_fetched_at) + '</div></div>' +
+          '<div class="card"><h2>' + svg('wave') + T('Recent earthquakes', 'Aktuelle Erdbeben') + '</h2>' +
+            '<div class="scrollx"><table class="tbl"><thead><tr><th>Mag</th><th>' + T('Place', 'Ort') + '</th><th></th><th>' + T('Time', 'Zeit') + '</th></tr></thead><tbody>' + quakeRows + '</tbody></table></div>' +
+            '<div class="foot">' + T('JMA · updated', 'JMA · aktualisiert') + ' ' + ago(d.quake_fetched_at) + '</div></div>' +
+        '</div>' +
+        '<div class="card" style="margin-top:14px"><h2>' + svg('shield') + T('Emergency phrases', 'Notfall-Phrasen') + '</h2>' +
+          '<div class="banner warn" style="margin-bottom:10px">' + T('Police 110 · Fire/Ambulance 119', 'Polizei 110 · Feuer/Krankenwagen 119') + '</div>' + emg + '</div>';
+    });
+  };
+
+  // ---- Settings ----------------------------------------------------------
+  SECTIONS.settings = function (panel) {
+    return invoke('/prefs', 'GET').then(function (d) {
+      var p = d.prefs || {};
+      function opt(v, cur) { return '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + v + '</option>'; }
+      panel.innerHTML =
+        '<div class="grid cols2">' +
+          '<div class="card"><h2>' + svg('settings') + T('Preferences', 'Einstellungen') + '</h2>' +
+            '<label class="lbl">' + T('Home currency', 'Heimatwährung') + '</label><select class="fld" id="s-cur">' +
+              ['EUR', 'USD', 'GBP', 'CHF'].map(function (c) { return opt(c, p.home_currency); }).join('') + '</select>' +
+            '<label class="lbl" style="margin-top:10px">' + T('IC card', 'IC-Karte') + '</label><select class="fld" id="s-ic">' +
+              ['', 'Suica', 'Pasmo', 'ICOCA', 'Andere'].map(function (c) { return '<option value="' + c + '"' + (p.ic_card === c ? ' selected' : '') + '>' + (c || '—') + '</option>'; }).join('') + '</select>' +
+            '<label class="lbl" style="margin-top:10px">' + T('Low IC warning (¥)', 'IC-Warnung (¥)') + '</label><input class="fld" id="s-low" type="number" value="' + esc(p.low_ic_threshold || '') + '" />' +
+          '</div>' +
+          '<div class="card"><h2>' + svg('shield') + T('Weather & trip', 'Wetter & Reise') + '</h2>' +
+            '<label class="lbl">' + T('Weather city (label)', 'Wetterstadt (Label)') + '</label><input class="fld" id="s-city" value="' + esc(p.weather_city || '') + '" placeholder="Tokyo" />' +
+            '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Latitude', 'Breitengrad') + '</label><input class="fld" id="s-lat" type="number" step="any" value="' + esc(p.home_lat || '') + '" placeholder="35.68" /></div>' +
+            '<div style="flex:1"><label class="lbl">' + T('Longitude', 'Längengrad') + '</label><input class="fld" id="s-lon" type="number" step="any" value="' + esc(p.home_lon || '') + '" placeholder="139.76" /></div></div>' +
+            '<div class="divider"></div>' +
+            '<label class="lbl">' + T('TREK trip ID (optional)', 'TREK-Reise-ID (optional)') + '</label><input class="fld" id="s-tripid" type="number" value="' + esc(p.trip_id || '') + '" placeholder="e.g. 1" />' +
+            '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Trip start', 'Reisebeginn') + '</label><input class="fld" id="s-ts" value="' + esc(p.trip_start || '') + '" placeholder="2026-08-01" /></div>' +
+            '<div style="flex:1"><label class="lbl">' + T('Trip end', 'Reiseende') + '</label><input class="fld" id="s-te" value="' + esc(p.trip_end || '') + '" placeholder="2026-08-14" /></div></div>' +
+          '</div>' +
+        '</div>' +
+        '<div class="row" style="margin-top:14px"><button class="btn" id="s-save">' + T('Save preferences', 'Einstellungen speichern') + '</button>' +
+        '<span class="faint" style="font-size:12px">' + T('Stored per user in the plugin database.', 'Pro Nutzer in der Plugin-Datenbank gespeichert.') + '</span></div>';
+
+      panel.querySelector('#s-save').onclick = function () {
+        var patch = {
+          home_currency: panel.querySelector('#s-cur').value,
+          ic_card: panel.querySelector('#s-ic').value,
+          low_ic_threshold: panel.querySelector('#s-low').value,
+          weather_city: panel.querySelector('#s-city').value,
+          home_lat: panel.querySelector('#s-lat').value,
+          home_lon: panel.querySelector('#s-lon').value,
+          trip_id: panel.querySelector('#s-tripid').value,
+          trip_start: panel.querySelector('#s-ts').value,
+          trip_end: panel.querySelector('#s-te').value
+        };
+        invoke('/prefs', 'POST', { prefs: patch }).then(function () {
+          notify('success', T('Preferences saved', 'Einstellungen gespeichert'));
+          sectionCache = {};
+        }).catch(function (e) { notify('error', e.message); });
+      };
+    });
+  };
+
+  // ---- start -------------------------------------------------------------
+  post({ type: 'trek:ready' });
+  // Fallback: if no context arrives (older host / harness quirk), boot anyway.
+  setTimeout(function () { if (!booted) { ctx.theme = null; document.documentElement.dataset.theme = resolveTheme({}); booted = true; boot(); } }, 800);
+})();
+</script>
+</body>
+</html>
