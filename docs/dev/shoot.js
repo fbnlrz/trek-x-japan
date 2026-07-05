@@ -5,7 +5,7 @@ const EXEC = '/opt/pw-browsers/chromium-1194/chrome-linux/chrome';
 const DOCS = '/home/user/trek-x-japan/docs';
 const BASE = 'http://localhost:4317';
 
-const TABS = ['countdown','nihongo','culture','budget','ic','food','season','safety','settings'];
+const TABS = ['countdown','season','culture','nihongo','budget','ic','food','passport','safety','settings'];
 
 async function main() {
   const browser = await chromium.launch({ executablePath: EXEC, args: ['--no-sandbox'] });
@@ -39,15 +39,15 @@ async function main() {
   // --- one dark shot (food) to show theme ---
   {
     const page = await browser.newPage({ viewport: { width: 1180, height: 900 }, deviceScaleFactor: 1 });
-    await page.goto(BASE + '/ui/harness.html?tab=food&theme=dark&locale=en', { waitUntil: 'networkidle' });
+    await page.goto(BASE + '/ui/harness.html?tab=passport&theme=dark&locale=en', { waitUntil: 'networkidle' });
     await page.waitForTimeout(1800);
     let h = 900;
     try { h = parseInt(await page.getAttribute('body', 'data-h')) || 900; } catch (_) {}
     h = Math.max(560, Math.min(h + 24, 2000));
     await page.setViewportSize({ width: 1180, height: h });
     await page.waitForTimeout(400);
-    await page.screenshot({ path: path.join(DOCS, 'tab-food-dark.png'), fullPage: true });
-    console.log('dark food -> tab-food-dark.png');
+    await page.screenshot({ path: path.join(DOCS, 'tab-passport-dark.png'), fullPage: true });
+    console.log('dark passport -> tab-passport-dark.png');
     await page.close();
   }
 
