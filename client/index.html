@@ -357,16 +357,21 @@
   var sectionCache = {};
   var tripInfo = null;
 
+  // Available viewport height, captured once (the host grows the iframe to what
+  // we report but does NOT scroll a too-tall frame — so we never report taller
+  // than the visible viewport and let #scroller scroll the content internally).
+  var AVAIL_H = 0;
+  function availH() { if (!AVAIL_H) AVAIL_H = Math.max(window.innerHeight || 700, 420); return AVAIL_H; }
   function reportHeight() {
     var appbar = document.querySelector('.appbar');
     var panel = document.getElementById('panel');
     var appH = appbar ? appbar.offsetHeight : 0;
     var panelH = panel ? panel.getBoundingClientRect().height : 0;
-    var h = Math.ceil(appH + panelH) + 48;
-    // Report the full content height so hosts that grow the iframe show
-    // everything; hosts that clip get internal scrolling via #scroller.
-    post({ type: 'trek:resize', height: Math.max(320, Math.min(h, 4000)) });
+    var content = Math.ceil(appH + panelH) + 36;
+    post({ type: 'trek:resize', height: Math.max(320, Math.min(content, availH())) });
   }
+  // If the browser/iframe genuinely gets more room, grow the cap (never shrink).
+  window.addEventListener('resize', function () { if (window.innerHeight > AVAIL_H) { AVAIL_H = window.innerHeight; reportHeight(); } });
   // Observe the content panel (its size changes as sections render).
   var _panelObserver = null;
   if (window.ResizeObserver) { try { _panelObserver = new ResizeObserver(reportHeight); } catch (_) {} }
