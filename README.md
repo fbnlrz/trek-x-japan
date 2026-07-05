@@ -1,65 +1,70 @@
 # TREK × Japan
 
-A single-page TREK plugin that bundles everything you need to **prepare** a trip
-to Japan and to **get by once you are on the ground** — organised as one hub page
-with nine tab sections, a private per-user datastore, and three keyless live
-data feeds.
+A **collaborative, in-trip** hub for a Japan trip. It mounts as a tab **inside a
+TREK trip planner** (a `trip-page`, TREK 3.2.1+), so it is always scoped to the
+open trip — and the planning data is **shared by every trip member**. One person
+sets the budget, another logs an expense, a third stamps a prefecture, and
+everyone sees the same board with **who did what**. Genuinely personal things —
+your Suica balance, your phrase favourites, your display currency — stay private
+to you.
 
 ## What it does
 
-TREK × Japan adds a full-page tool to your TREK navigation. Its tabs are sorted
-into the trip's natural flow — first **prep** (before you fly), then **on the
-ground** (during the trip):
+TREK × Japan adds a tab inside the trip planner, sorted into the trip's natural
+flow — first **prep** (before you fly), then **on the ground** (during the trip).
+Data is either **shared** with the whole trip or **personal** to you:
 
 **Prep**
 
-- **Countdown & checklist** — days until departure (from a linked TREK trip, or
-  from the trip dates you set) plus a grouped prep/packing checklist (JR Pass,
-  Pocket WiFi, IC-card app, power adapter, cash, eSIM …).
-- **Season & events** — average sakura and kōyō dates for major cities (sorted
-  by bloom date), plus matsuri/hanabi highlighted when they fall inside your
-  travel window.
-- **Culture & gomi** — 20 etiquette do's & don'ts (onsen, temple/shrine, dining,
-  train, tipping) and a searchable garbage-separation helper (moeru/moenai, PET,
-  cans, bottles, plastic …).
-- **Language (Nihongo)** — a 46-entry travel phrasebook with a *phrase of the
-  day*, per-user favourites and a category filter. Every phrase shows kanji,
-  kana, Hepburn romaji and an English/German translation.
+- **Countdown & checklist** *(shared)* — days until departure from the trip's own
+  dates, plus a grouped prep/packing checklist (JR Pass, Pocket WiFi, IC-card
+  app, adapters, cash, eSIMs …). Every item shows which member ticked it.
+- **Season & events** *(shared window)* — average sakura and kōyō dates for major
+  cities (sorted by bloom date), plus matsuri/hanabi highlighted when they fall
+  inside the trip's dates.
+- **Culture & gomi** *(reference)* — 20 etiquette do's & don'ts (onsen,
+  temple/shrine, dining, train, tipping) and a searchable garbage-separation
+  helper (moeru/moenai, PET, cans, bottles, plastic …).
+- **Language (Nihongo)** *(personal favourites)* — a 46-entry travel phrasebook
+  with a *phrase of the day*, your own favourites and a category filter. Each
+  phrase shows kanji, kana, Hepburn romaji and an English/German translation.
 
 **On the ground**
 
-- **Yen & budget** — set a planned budget, log expenses, see spent/remaining, and
-  a **live ¥ ⇄ home-currency** conversion cached from open.er-api.com.
-- **IC card (Suica)** — carry your balance, charge and spend, keep a ledger, and
-  get a warning below your configured threshold.
-- **Food** — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for everything
-  you eat along the way.
-- **Passport** — a **47-prefecture passport** (region grid) you stamp as you
-  travel, plus Onsen/Goshuin/Eki-stamp collections.
-- **Safety & weather** — current weather and a 5-day forecast from
-  api.open-meteo.com, recent earthquakes from the JMA feed, and quick-access
-  emergency phrases.
+- **Yen & budget** *(shared)* — the trip's planned budget and a shared expense
+  log (each entry tagged with the member who added it), spent/remaining, and a
+  **live ¥ ⇄ your-currency** conversion cached from open.er-api.com.
+- **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
+  a warning below your threshold. Every traveller has their own card.
+- **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
+  everything the group eats along the way.
+- **Passport** *(shared)* — a **47-prefecture passport** the group stamps
+  together (each stamp shows who added it), plus Onsen/Goshuin/Eki-stamp
+  collections.
+- **Safety & weather** *(shared location)* — current weather and a 5-day forecast
+  from api.open-meteo.com for the trip's weather location, recent earthquakes
+  from the JMA feed, and quick-access emergency phrases.
 
-Everything is local-first: the datasets ship inside the plugin and all state is
-stored per user in the plugin's own database. Network calls are limited to three
-free, keyless endpoints and their results are cached, so the page renders fast.
-The UI is drawn entirely with inline SVG (no bundled images or web fonts, per
-TREK's sandbox), follows the host's light/dark theme, and speaks English and
-German off the TREK locale.
+Everything is local-first: the datasets ship inside the plugin and all state
+lives in the plugin's own database. Network calls are limited to three free,
+keyless endpoints and their results are cached, so the tab renders fast. The UI
+is drawn entirely with inline SVG (no bundled images or web fonts, per TREK's
+sandbox), follows the host's light/dark theme, and speaks English and German off
+the TREK locale.
 
 ## Screenshots
 
-The hub in light and dark, opened on the prefecture passport:
+The hub in light and dark, opened on the shared prefecture passport:
 
 ![TREK × Japan hub in light and dark](docs/screenshot.png)
 
 ### Prep
 
-**Countdown & checklist** — days to departure and a grouped prep list.
+**Countdown & checklist** — days to departure and a shared prep list showing who ticked each item.
 
 ![Countdown & checklist](docs/tab-countdown.png)
 
-**Season & events** — sakura/kōyō dates and matsuri in your travel window.
+**Season & events** — sakura/kōyō dates and matsuri inside the trip's window.
 
 ![Season & events](docs/tab-season.png)
 
@@ -67,25 +72,25 @@ The hub in light and dark, opened on the prefecture passport:
 
 ![Culture & gomi](docs/tab-culture.png)
 
-**Language (Nihongo)** — phrase of the day, favourites and category filter.
+**Language (Nihongo)** — phrase of the day, personal favourites and category filter.
 
 ![Phrasebook](docs/tab-nihongo.png)
 
 ### On the ground
 
-**Yen & budget** — planned budget, expenses and live ¥ ⇄ home-currency FX.
+**Yen & budget** — shared budget and expenses (tagged per member) with live ¥ ⇄ home-currency FX.
 
 ![Budget](docs/tab-budget.png)
 
-**IC card (Suica)** — balance, charge/spend, low-balance warning and ledger.
+**IC card (Suica)** — your personal balance, charge/spend, low-balance warning and ledger.
 
 ![IC card](docs/tab-ic.png)
 
-**Food** — konbini/ramen/kaiten counters for everything you eat.
+**Food** — shared konbini/ramen/kaiten counters for everything the group eats.
 
 ![Food tally](docs/tab-food.png)
 
-**Passport** — the 47-prefecture passport and Onsen/Goshuin/Eki collections.
+**Passport** — the shared 47-prefecture passport (who stamped what) and Onsen/Goshuin/Eki collections.
 
 ![Prefecture passport](docs/tab-passport.png)
 
@@ -99,7 +104,7 @@ The passport in dark theme:
 
 ### Settings
 
-**Settings** — currency, IC card, weather coordinates and trip window.
+**Settings** — personal preferences (currency, IC card) and the trip-shared weather location.
 
 ![Settings](docs/tab-settings.png)
 
@@ -109,10 +114,11 @@ This plugin requests the following permissions, each for a specific reason:
 
 | Permission | Why it is needed |
 |---|---|
-| `db:own` | Stores all per-user state (checklist, favourites, visited prefectures, IC balance & ledger, budget & expenses, food tally, collections, your preferences) and the API response caches in the plugin's own private SQLite database. |
-| `db:read:trips` | Reads the start/end dates of a linked TREK trip (membership-checked, in the route handler) so the countdown and the season section can use your real trip window instead of a manually entered date. |
+| `db:own` | Stores everything in the plugin's own private SQLite database: **shared, per-trip** data (checklist, budget & expenses, food tally, prefecture passport, collections, the trip weather location) and **personal, per-user** data (your IC balance & ledger, phrase favourites, display preferences), plus the API response caches. |
+| `db:read:trips` | Membership-checks the acting user on **every shared route** (`ctx.trips.getById`), so only members of a trip can read or write that trip's shared board, and reads the trip's start/end dates for the countdown and season window. |
+| `db:read:users` | Resolves trip co-members' display names for the collaboration labels — the "added by", "checked by" and "stamped by" tags on shared items. Returns only you and your trip co-members. |
 | `http:outbound` | The base marker declaring that the plugin makes outbound HTTP requests. On its own it reaches no host — the specific hosts below are what actually open. |
-| `http:outbound:api.open-meteo.com` | Fetches current weather and the 5-day forecast for your configured location (Open-Meteo, no API key). |
+| `http:outbound:api.open-meteo.com` | Fetches current weather and the 5-day forecast for the trip's weather location (Open-Meteo, no API key). |
 | `http:outbound:open.er-api.com` | Fetches JPY exchange rates for the live yen ⇄ home-currency conversion in the budget section (open.er-api.com, no API key). |
 | `http:outbound:www.jma.go.jp` | Fetches the recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
 
@@ -123,18 +129,21 @@ update that adds more permissions will require an admin to re-approve the plugin
 
 ## Setup
 
-1. Install the plugin from the TREK plugin store (Admin → Plugins → Discover) and
-   activate it, approving the permissions above.
-2. Open **TREK × Japan** from the top navigation and go to the **Settings** tab.
-3. Set your **home currency** and (optionally) your **IC card** type and the
-   **low-balance threshold** in yen.
-4. For weather, enter the **latitude and longitude** of the city you want to
-   track (e.g. Tokyo `35.68 / 139.76`); the city name field is just a label.
-5. To drive the countdown and season window either enter a **TREK trip ID** (its
-   dates are read live and membership-checked) or set **trip start/end** dates
-   directly.
-6. Everything else works immediately — the phrasebook, etiquette, gomi search,
-   food/prefecture/collection trackers, and the cached FX/weather/quake feeds.
+1. Requires **TREK 3.2.1+** (the `trip-page` plugin type). Install the plugin
+   from the plugin store (Admin → Plugins → Discover) and activate it, approving
+   the permissions above.
+2. Open any **trip** in the planner — **TREK × Japan** appears as a tab inside
+   that trip. Everything is automatically scoped to that trip; there is nothing
+   to link by hand.
+3. Open the **Settings** tab and set your **personal** preferences: home
+   currency, IC-card type and the low-balance threshold (these are yours alone).
+4. Still in Settings, set the **trip weather location** (latitude/longitude of
+   the destination, e.g. Tokyo `35.68 / 139.76`); this is **shared** and drives
+   the Safety tab for everyone on the trip.
+5. That's it — invite your travel companions to the trip and plan together: the
+   checklist, budget, food counters, prefecture passport and collections are all
+   shared and show who did what, while your IC card and phrase favourites stay
+   personal.
 
 ## License
 

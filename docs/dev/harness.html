@@ -15,12 +15,13 @@
   var tab = q.get('tab') || 'countdown';
   var theme = q.get('theme') || 'light';
   var locale = q.get('locale') || 'en';
+  var tripId = q.get('tripId') || '1';   // trip-page always has a trip in context
   var f = document.getElementById('f');
   f.src = '/ui#' + tab;
   addEventListener('message', function (e) {
     var m = e.data; if (!m || !m.type) return;
     if (m.type === 'trek:ready' || m.type === 'trek:context:request') {
-      f.contentWindow.postMessage({ type: 'trek:context', tripId: null, userId: '1',
+      f.contentWindow.postMessage({ type: 'trek:context', tripId: tripId, userId: '1',
         theme: theme, locale: locale, hostOrigin: '*',
         appearance: { scheme: 'default', density: 'comfortable', reducedMotion: false, noTransparency: false } }, '*');
     } else if (m.type === 'trek:invoke') {

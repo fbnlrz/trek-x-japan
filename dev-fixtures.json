@@ -2,7 +2,7 @@
   "config": {},
   "trips": {
     "1": {
-      "members": [1],
+      "members": [1, 2],
       "data": {
         "id": 1,
         "title": "Japan 2026",
@@ -12,6 +12,7 @@
     }
   },
   "users": {
-    "1": { "id": 1, "username": "traveler", "display_name": "Traveler" }
+    "1": { "id": 1, "username": "traveler", "display_name": "Mika" },
+    "2": { "id": 2, "username": "yuki", "display_name": "Yuki" }
   }
 }

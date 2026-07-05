@@ -191,11 +191,19 @@
   var pending = {}; var reqSeq = 0;
 
   function post(msg) { window.parent.postMessage(msg, '*'); }
+  // This is a trip-page: tripId is always known from trek:context. Inject it
+  // into every call so trip-scoped routes get their (membership-checked) trip;
+  // personal routes simply ignore it.
   function invoke(sub, method, body) {
+    method = method || 'GET';
+    if (ctx.tripId != null) {
+      if (method === 'GET') sub += (sub.indexOf('?') >= 0 ? '&' : '?') + 'tripId=' + encodeURIComponent(ctx.tripId);
+      else { body = body || {}; if (body.tripId == null) body.tripId = ctx.tripId; }
+    }
     return new Promise(function (resolve, reject) {
       var id = 'r' + (++reqSeq);
       pending[id] = { resolve: resolve, reject: reject };
-      post({ type: 'trek:invoke', requestId: id, sub: sub, method: method || 'GET', body: body });
+      post({ type: 'trek:invoke', requestId: id, sub: sub, method: method, body: body });
     });
   }
   function notify(level, message) { post({ type: 'trek:notify', level: level, message: message }); }
@@ -322,6 +330,7 @@
   var root = document.getElementById('root');
   var booted = false, current = null;
   var sectionCache = {};
+  var tripInfo = null;
 
   function reportHeight() {
     var h = Math.ceil(document.body.getBoundingClientRect().height) + 4;
@@ -347,21 +356,33 @@
 
   function boot() {
     root.innerHTML = '';
+    // trip-page always carries a tripId; if it is missing the page was opened
+    // outside a trip context — say so rather than failing every call.
+    if (ctx.tripId == null) {
+      root.innerHTML = '<div class="hdr"><span class="mark">' + svg('compass') + '</span>' +
+        '<div><h1>TREK × Japan</h1><div class="sub">' +
+        T('Open this tab from inside a trip to start planning together.', 'Öffne diesen Tab in einer Reise, um gemeinsam zu planen.') +
+        '</div></div></div>';
+      reportHeight();
+      return;
+    }
     var hdr = document.createElement('div'); hdr.id = 'hdr'; root.appendChild(hdr);
     var tabs = document.createElement('div'); tabs.className = 'tabs'; tabs.id = 'tabs'; root.appendChild(tabs);
     var panel = document.createElement('div'); panel.id = 'panel'; root.appendChild(panel);
     renderHeader(); renderTabs();
     var initial = (location.hash || '').replace('#', '');
     openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'countdown');
+    invoke('/meta', 'GET').then(function (d) { tripInfo = d; renderHeader(); }).catch(function () {});
   }
   function renderHeader() {
     var hdr = document.getElementById('hdr'); if (!hdr) return;
     hdr.className = 'hdr';
+    var sub = (tripInfo && tripInfo.trip && tripInfo.trip.title)
+      ? esc(tripInfo.trip.title) + ' · ' + T('shared trip hub', 'gemeinsamer Reise-Hub')
+      : T('Your Japan trip hub — prep and on the ground', 'Dein Japan-Reise-Hub — Vorbereitung und vor Ort');
     hdr.innerHTML =
       '<span class="mark">' + svg('compass') + '</span>' +
-      '<div><h1>TREK × Japan</h1><div class="sub">' +
-      T('Your Japan trip hub — prep and on the ground', 'Dein Japan-Reise-Hub — Vorbereitung und vor Ort') +
-      '</div></div>';
+      '<div><h1>TREK × Japan</h1><div class="sub">' + sub + '</div></div>';
   }
   function renderTabs() {
     var tabs = document.getElementById('tabs'); tabs.innerHTML = '';
@@ -420,9 +441,7 @@
       } else {
         countHtml = '<div class="big">お帰り</div><div class="kicker">' + T('trip complete', 'Reise beendet') + '</div>';
       }
-      var srcLabel = trip.source === 'trek'
-        ? T('from linked TREK trip', 'aus verknüpfter TREK-Reise')
-        : T('from your trip dates', 'aus deinen Reisedaten');
+      var srcLabel = T('this trip · shared with all members', 'diese Reise · geteilt mit allen Mitgliedern');
       var tripLine = (trip.start ? esc(trip.start) : '—') + (trip.end ? ' → ' + esc(trip.end) : '') +
         (trip.title ? ' · ' + esc(trip.title) : '');
 
@@ -436,7 +455,9 @@
         return '<div class="kicker" style="margin:12px 0 4px">' + esc(gnames[g] || g) + '</div>' +
           groups[g].map(function (it) {
             return '<div class="listrow"><span class="check' + (it.done ? ' on' : '') + '" data-id="' + esc(it.id) + '">' +
-              svg('check') + '</span><span>' + esc(T(it.en, it.de)) + '</span></div>';
+              svg('check') + '</span><span style="flex:1">' + esc(T(it.en, it.de)) +
+              (it.done && it.by ? ' <span class="faint" style="font-size:11px">· ' + esc(it.by) + '</span>' : '') +
+              '</span></div>';
           }).join('');
       }).join('');
 
@@ -595,7 +616,9 @@
     var sym = d.currency_symbol;
     var overspent = d.remaining_yen < 0;
     var spendRows = (d.spends || []).map(function (s) {
-      return '<tr><td class="num">' + yen(s.amount_yen) + '</td><td>' + esc(s.note || '') + '</td><td class="faint">' + ago(s.at) + '</td></tr>';
+      return '<tr><td class="num">' + yen(s.amount_yen) + '</td><td>' + esc(s.note || '') +
+        (s.by ? ' <span class="faint" style="font-size:11px">· ' + esc(s.by) + '</span>' : '') +
+        '</td><td class="faint">' + ago(s.at) + '</td></tr>';
     }).join('') || '<tr><td colspan="3" class="faint">' + T('No expenses yet', 'Noch keine Ausgaben') + '</td></tr>';
     var fxLine = d.rate != null
       ? ('1000 ¥ ≈ ' + home(1000 * d.rate, sym) + ' · ' + T('updated', 'aktualisiert') + ' ' + ago(d.fx_fetched_at))
@@ -722,11 +745,13 @@
   SECTIONS.passport = function (panel) {
     return invoke('/collect/state', 'GET').then(function (d) {
       var visitedSet = {}; d.visited.forEach(function (v) { visitedSet[v] = true; });
+      var visitedBy = d.visited_by || {};
       var byRegion = {};
       d.prefectures.forEach(function (p) { (byRegion[p.region] = byRegion[p.region] || []).push(p); });
       var mapHtml = REGION_ORDER.filter(function (r) { return byRegion[r]; }).map(function (r) {
         var tiles = byRegion[r].map(function (p) {
-          return '<div class="pref' + (visitedSet[p.code] ? ' on' : '') + '" data-pref="' + esc(p.code) + '" title="' + esc(p.romaji) + '">' +
+          var tip = p.romaji + (visitedSet[p.code] && visitedBy[p.code] ? ' — ' + visitedBy[p.code] : '');
+          return '<div class="pref' + (visitedSet[p.code] ? ' on' : '') + '" data-pref="' + esc(p.code) + '" title="' + esc(tip) + '">' +
             '<div class="pc">' + esc(p.code.replace('JP-', '')) + '</div>' +
             '<div class="pn">' + esc(p.name) + '</div>' +
             '<div class="pj">' + esc(p.jp) + '</div></div>';
@@ -737,7 +762,7 @@
       var collectHtml = COLLECT_KINDS.map(function (c) {
         var items = (d.collections[c.k] || []);
         var chips = items.map(function (it) {
-          return '<span class="chip static" data-col="' + c.k + '" data-key="' + esc(it.key) + '">' + esc(it.key) + '</span>';
+          return '<span class="chip static" data-col="' + c.k + '" data-key="' + esc(it.key) + '" title="' + (it.by ? esc(it.by) : '') + '">' + esc(it.key) + '</span>';
         }).join('') || '<span class="faint" style="font-size:12px">' + T('none yet', 'noch keine') + '</span>';
         return '<div style="margin-bottom:12px"><div class="between" style="margin-bottom:6px"><span class="kicker">' + esc(T(c.en, c.de)) + ' (' + items.length + ')</span></div>' +
           '<div class="row" style="margin-bottom:6px"><input class="fld col-in" data-kind="' + c.k + '" placeholder="' + T('add name…', 'Name hinzufügen…') + '" />' +
@@ -866,42 +891,40 @@
   SECTIONS.settings = function (panel) {
     return invoke('/prefs', 'GET').then(function (d) {
       var p = d.prefs || {};
+      var tp = d.trip_prefs || {};
       function opt(v, cur) { return '<option value="' + v + '"' + (cur === v ? ' selected' : '') + '>' + v + '</option>'; }
       panel.innerHTML =
         '<div class="grid cols2">' +
-          '<div class="card"><h2>' + svg('settings') + T('Preferences', 'Einstellungen') + '</h2>' +
+          '<div class="card"><h2>' + svg('settings') + T('Personal', 'Persönlich') + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Only you see these.', 'Nur du siehst diese.') + '</div>' +
             '<label class="lbl">' + T('Home currency', 'Heimatwährung') + '</label><select class="fld" id="s-cur">' +
               ['EUR', 'USD', 'GBP', 'CHF'].map(function (c) { return opt(c, p.home_currency); }).join('') + '</select>' +
             '<label class="lbl" style="margin-top:10px">' + T('IC card', 'IC-Karte') + '</label><select class="fld" id="s-ic">' +
               ['', 'Suica', 'Pasmo', 'ICOCA', 'Andere'].map(function (c) { return '<option value="' + c + '"' + (p.ic_card === c ? ' selected' : '') + '>' + (c || '—') + '</option>'; }).join('') + '</select>' +
             '<label class="lbl" style="margin-top:10px">' + T('Low IC warning (¥)', 'IC-Warnung (¥)') + '</label><input class="fld" id="s-low" type="number" value="' + esc(p.low_ic_threshold || '') + '" />' +
           '</div>' +
-          '<div class="card"><h2>' + svg('shield') + T('Weather & trip', 'Wetter & Reise') + '</h2>' +
-            '<label class="lbl">' + T('Weather city (label)', 'Wetterstadt (Label)') + '</label><input class="fld" id="s-city" value="' + esc(p.weather_city || '') + '" placeholder="Tokyo" />' +
-            '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Latitude', 'Breitengrad') + '</label><input class="fld" id="s-lat" type="number" step="any" value="' + esc(p.home_lat || '') + '" placeholder="35.68" /></div>' +
-            '<div style="flex:1"><label class="lbl">' + T('Longitude', 'Längengrad') + '</label><input class="fld" id="s-lon" type="number" step="any" value="' + esc(p.home_lon || '') + '" placeholder="139.76" /></div></div>' +
-            '<div class="divider"></div>' +
-            '<label class="lbl">' + T('TREK trip ID (optional)', 'TREK-Reise-ID (optional)') + '</label><input class="fld" id="s-tripid" type="number" value="' + esc(p.trip_id || '') + '" placeholder="e.g. 1" />' +
-            '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Trip start', 'Reisebeginn') + '</label><input class="fld" id="s-ts" value="' + esc(p.trip_start || '') + '" placeholder="2026-08-01" /></div>' +
-            '<div style="flex:1"><label class="lbl">' + T('Trip end', 'Reiseende') + '</label><input class="fld" id="s-te" value="' + esc(p.trip_end || '') + '" placeholder="2026-08-14" /></div></div>' +
+          '<div class="card"><h2>' + svg('sun') + T('Trip weather location', 'Wetter-Ort der Reise') + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Shared with all trip members — drives the Safety tab.', 'Geteilt mit allen Reise-Mitgliedern — steuert den Sicherheits-Tab.') + '</div>' +
+            '<label class="lbl">' + T('City (label)', 'Stadt (Label)') + '</label><input class="fld" id="s-city" value="' + esc(tp.weather_city || '') + '" placeholder="Tokyo" />' +
+            '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Latitude', 'Breitengrad') + '</label><input class="fld" id="s-lat" type="number" step="any" value="' + esc(tp.weather_lat || '') + '" placeholder="35.68" /></div>' +
+            '<div style="flex:1"><label class="lbl">' + T('Longitude', 'Längengrad') + '</label><input class="fld" id="s-lon" type="number" step="any" value="' + esc(tp.weather_lon || '') + '" placeholder="139.76" /></div></div>' +
           '</div>' +
         '</div>' +
         '<div class="row" style="margin-top:14px"><button class="btn" id="s-save">' + T('Save preferences', 'Einstellungen speichern') + '</button>' +
-        '<span class="faint" style="font-size:12px">' + T('Stored per user in the plugin database.', 'Pro Nutzer in der Plugin-Datenbank gespeichert.') + '</span></div>';
+        '<span class="faint" style="font-size:12px">' + T('Personal settings are per user; the weather location is shared with the trip.', 'Persönliches ist pro Nutzer; der Wetter-Ort gilt für die ganze Reise.') + '</span></div>';
 
       panel.querySelector('#s-save').onclick = function () {
-        var patch = {
+        var prefs = {
           home_currency: panel.querySelector('#s-cur').value,
           ic_card: panel.querySelector('#s-ic').value,
-          low_ic_threshold: panel.querySelector('#s-low').value,
-          weather_city: panel.querySelector('#s-city').value,
-          home_lat: panel.querySelector('#s-lat').value,
-          home_lon: panel.querySelector('#s-lon').value,
-          trip_id: panel.querySelector('#s-tripid').value,
-          trip_start: panel.querySelector('#s-ts').value,
-          trip_end: panel.querySelector('#s-te').value
+          low_ic_threshold: panel.querySelector('#s-low').value
         };
-        invoke('/prefs', 'POST', { prefs: patch }).then(function () {
+        var trip_prefs = {
+          weather_city: panel.querySelector('#s-city').value,
+          weather_lat: panel.querySelector('#s-lat').value,
+          weather_lon: panel.querySelector('#s-lon').value
+        };
+        invoke('/prefs', 'POST', { prefs: prefs, trip_prefs: trip_prefs }).then(function () {
           notify('success', T('Preferences saved', 'Einstellungen gespeichert'));
           sectionCache = {};
         }).catch(function (e) { notify('error', e.message); });
