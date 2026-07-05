@@ -156,6 +156,24 @@ function dayOfYear(d) { const s = Date.UTC(d.getUTCFullYear(), 0, 0); return Mat
 function daysUntil(iso) { if (!iso) return null; const t = Date.parse(iso); if (!Number.isFinite(t)) return null; const td = new Date(); return Math.round((t - Date.UTC(td.getUTCFullYear(), td.getUTCMonth(), td.getUTCDate())) / 86400000); }
 function tripDates(trip) { return { title: trip.title || trip.name || null, start: trip.start_date || trip.startDate || null, end: trip.end_date || trip.endDate || null }; }
 function mmToMonth(md) { return md ? parseInt(String(md).split('-')[0], 10) : null; }
+// First YYYY-MM-DD inside the trip window whose month matches `month`
+// (so a matsuri known only by month lands on a real itinerary day).
+function dateForMonth(trip, month) {
+  const td = tripDates(trip);
+  if (!td.start) return null;
+  const s = new Date(td.start); if (isNaN(s.getTime())) return td.start;
+  const e = td.end ? new Date(td.end) : s; const ed = isNaN(e.getTime()) ? s : e;
+  if (month == null) return td.start;
+  let d = Date.UTC(s.getUTCFullYear(), s.getUTCMonth(), s.getUTCDate());
+  const end = Date.UTC(ed.getUTCFullYear(), ed.getUTCMonth(), ed.getUTCDate());
+  let guard = 0;
+  while (d <= end && guard < 400) {
+    const dt = new Date(d);
+    if (dt.getUTCMonth() + 1 === month) return dt.toISOString().slice(0, 10);
+    d += 86400000; guard++;
+  }
+  return td.start;
+}
 function tripMonths(start, end) { if (!start) return null; const s = new Date(start); if (isNaN(s.getTime())) return null; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e; const m = new Set(); let y = s.getUTCFullYear(), mo = s.getUTCMonth(); const ey = ed.getUTCFullYear(), em = ed.getUTCMonth(); let g = 0; while ((y < ey || (y === ey && mo <= em)) && g < 24) { m.add(mo + 1); mo++; if (mo > 11) { mo = 0; y++; } g++; } return Array.from(m); }
 // Does [start,end] overlap the MM-DD..MM-DD window in any spanned year?
 function overlapsSeason(start, end, fromMD, toMD) {
@@ -582,7 +600,7 @@ const PLUGIN = {
     // tag it via ctx.meta and mirror the note for the place-detail hook.
     { method: 'POST', path: '/itinerary/add', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
-      const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
+      const { userId, tripId, trip } = await requireTrip(req, ctx, body.tripId);
       const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
       const notes = String(body.notes || '').slice(0, 2000);
       // Geo-locate the place from the matsuri/sakura city so the pin lands in Japan.
@@ -592,9 +610,13 @@ const PLUGIN = {
       const placeRes = await attempt(() => ctx.places.create(tripId, placeInput));
       if (!placeRes.ok) return json(400, { error: placeRes.error });
       const place = placeRes.value; const placeId = place && place.id;
+      // Resolve a date: explicit body.date, else a date inside the trip window
+      // that matches the event's month (so the matsuri lands on the itinerary).
+      let dateStr = body.date ? String(body.date) : null;
+      if (!dateStr && body.month != null) dateStr = dateForMonth(trip, toNum(body.month, null));
       let dayId = null, assigned = false;
-      if (body.date && placeId != null) {
-        const dayRes = await attempt(() => ctx.days.create(tripId, { date: String(body.date) }));
+      if (dateStr && placeId != null) {
+        const dayRes = await attempt(() => ctx.days.create(tripId, { date: dateStr }));
         if (dayRes.ok && dayRes.value) { dayId = dayRes.value.id; const asg = await attempt(() => ctx.itinerary.assign(tripId, dayId, placeId)); assigned = asg.ok; }
       }
       // Short, distinct note for the place-detail hook (not a copy of the description).

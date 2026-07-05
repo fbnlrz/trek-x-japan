@@ -58,5 +58,10 @@
   { "name": "Beppu", "lat": 33.2846, "lon": 131.4914, "pref": "Oita" },
   { "name": "Miyazaki", "lat": 31.9077, "lon": 131.4202, "pref": "Miyazaki" },
   { "name": "Kagoshima", "lat": 31.5602, "lon": 130.5581, "pref": "Kagoshima" },
-  { "name": "Naha (Okinawa)", "lat": 26.2124, "lon": 127.6809, "pref": "Okinawa" }
+  { "name": "Naha (Okinawa)", "lat": 26.2124, "lon": 127.6809, "pref": "Okinawa" },
+  { "name": "Kishiwada", "lat": 34.4681, "lon": 135.3710, "pref": "Osaka" },
+  { "name": "Chichibu", "lat": 35.9911, "lon": 139.0855, "pref": "Saitama" },
+  { "name": "Nagaoka", "lat": 37.4461, "lon": 138.8515, "pref": "Niigata" },
+  { "name": "Yamaga", "lat": 33.0136, "lon": 130.6892, "pref": "Kumamoto" },
+  { "name": "Minamisoma", "lat": 37.6421, "lon": 140.9573, "pref": "Fukushima" }
 ]

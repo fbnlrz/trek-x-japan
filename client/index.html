@@ -623,7 +623,7 @@
           '<div class="wrap" style="margin-bottom:8px">' + catChips + '</div>' +
           '<button class="chip" id="favonly" aria-pressed="' + (nihongoState.favOnly ? 'true' : 'false') + '">' + svg('star') + ' ' + T('Favorites', 'Favoriten') + '</button>' +
           '<div class="divider"></div>' +
-          '<div style="max-height:420px;overflow:auto">' + rows + '</div>' +
+          '<div style="">' + rows + '</div>' +
         '</div>' +
       '</div>';
 
@@ -733,7 +733,7 @@
           '<div class="row"><input class="fld" id="sp-amt" type="number" placeholder="¥" style="max-width:120px" />' +
           '<input class="fld" id="sp-note" placeholder="' + T('note (e.g. lunch)', 'Notiz (z.B. Mittagessen)') + '" />' +
           '<button class="btn" id="sp-add">' + svg('plus') + '</button></div>' +
-          '<div class="scrollx" style="margin-top:12px;max-height:300px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Note', 'Notiz') + '</th><th></th></tr></thead><tbody>' + spendRows + '</tbody></table></div>' +
+          '<div class="scrollx" style="margin-top:12px;"><table class="tbl"><thead><tr><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Note', 'Notiz') + '</th><th></th></tr></thead><tbody>' + spendRows + '</tbody></table></div>' +
         '</div>' +
       '</div>' +
       '<div class="card" style="margin-top:14px" id="costs-card"><h2>' + svg('yen') + T('TREK budget (Costs addon)', 'TREK-Budget (Costs-Addon)') + '</h2>' +
@@ -815,7 +815,7 @@
             '<button class="btn sec sm" id="ic-setbtn">' + T('Set', 'Setzen') + '</button></div>' +
         '</div>' +
         '<div class="card"><h2>' + svg('refresh') + T('History', 'Verlauf') + '</h2>' +
-          '<div class="scrollx" style="max-height:360px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('Type', 'Typ') + '</th><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Balance', 'Stand') + '</th><th></th></tr></thead><tbody>' + ledgerRows + '</tbody></table></div>' +
+          '<div class="scrollx" style=""><table class="tbl"><thead><tr><th>' + T('Type', 'Typ') + '</th><th>' + T('Amount', 'Betrag') + '</th><th>' + T('Balance', 'Stand') + '</th><th></th></tr></thead><tbody>' + ledgerRows + '</tbody></table></div>' +
         '</div>' +
       '</div>';
 
@@ -908,7 +908,7 @@
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('grid') + T('Prefecture passport', 'Präfektur-Pass') + ' · ' + d.visited.length + '/' + d.prefectures.length + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Tap a prefecture to stamp it as visited.', 'Tippe eine Präfektur an, um sie als besucht zu stempeln.') + '</div>' +
-            '<div style="max-height:620px;overflow:auto">' + mapHtml + '</div></div>' +
+            '<div style="">' + mapHtml + '</div></div>' +
           '<div class="card"><h2>' + svg('star') + T('Collections', 'Sammlungen') + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Log the onsen, goshuin and eki stamps you gather.', 'Sammle Onsen, Goshuin und Eki-Stempel.') + '</div>' +
             collectHtml + '</div>' +
@@ -973,17 +973,19 @@
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('season') + T('Sakura & kōyō', 'Sakura & Kōyō') + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Average full-bloom (cherry) and peak-colour (autumn) dates. Rows in your travel window are highlighted.', 'Durchschnittliche Vollblüte (Kirsche) und Farbhöhepunkt (Herbst). Zeilen in deinem Reisezeitraum sind hervorgehoben.') + '</div>' +
-            '<div class="scrollx" style="max-height:560px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura (bloom)', 'Sakura (Blüte)') + '</th><th>' + T('Kōyō (autumn)', 'Kōyō (Herbst)') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
+            '<div class="scrollx" style=""><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura (bloom)', 'Sakura (Blüte)') + '</th><th>' + T('Kōyō (autumn)', 'Kōyō (Herbst)') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
           '<div class="card"><h2>' + svg('season') + T('Matsuri & hanabi', 'Matsuri & Hanabi') + '</h2>' +
             '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + ' · ' + T('“Add to planner” drops a located place into the trip.', '„Zum Planer“ legt einen verorteten Ort in der Reise an.') + '</div>' +
-            '<div style="max-height:520px;overflow:auto">' + matsuriCards + '</div></div>' +
+            '<div style="">' + matsuriCards + '</div></div>' +
         '</div>';
 
       panel.querySelectorAll('.mplan').forEach(function (b) {
         b.onclick = function () {
           var m = mlist[parseInt(b.getAttribute('data-i'), 10)]; if (!m) return;
           b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
-          invoke('/itinerary/add', 'POST', { name: m.name + ' (' + m.city + ')', notes: T(m.blurb_en, m.blurb_de), city: m.city, tag: T('Matsuri', 'Matsuri') + ' · ' + monthName(m.month) })
+          var loc = m.city + (m.pref_name ? ', ' + m.pref_name : '') + (m.region ? ' (' + m.region + ')' : '');
+          var richNotes = monthName(m.month) + ' · ' + loc + ' — ' + T(m.blurb_en, m.blurb_de);
+          invoke('/itinerary/add', 'POST', { name: m.name + ' — ' + monthName(m.month), notes: richNotes, city: m.city, month: m.month, tag: T('Matsuri', 'Matsuri') + ' · ' + monthName(m.month) })
             .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
             .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message || T('Add failed', 'Hinzufügen fehlgeschlagen')); });
         };
