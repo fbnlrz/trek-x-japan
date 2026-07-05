@@ -3,19 +3,23 @@
 This plugin is built as a **`trip-page`** (TREK 3.2.1+): a collaborative tab
 **inside a trip**, scoped to the open trip, with data shared by all trip members.
 
-## Status / tooling gate
+## Status / tooling gate — CLEARED (SDK 1.3.0 published)
 
 - **Code: done.** Manifest `type: "trip-page"`, `trek: ">=3.2.1 <4.0.0"`; server
-  and client implement the collaborative, trip-scoped model; verified end-to-end
-  against the SDK dev server (which accepts `trip-page`).
-- **Not yet publishable.** The published SDK on npm is **1.2.1**, whose
-  `validate` rejects `type: trip-page`
-  (`error: type must be one of integration/page/widget`), so `validate` / `pack`
-  / `publish` — and the registry CI (v3-2-1 manifest-parity schema) — cannot pass
-  until **SDK 1.3.0 / TREK 3.2.1** are released.
-- **Plan:** when SDK ≥ 1.3.0 ships, run `validate` → `pack` → `preflight` →
-  `publish` (registry PR opened manually; `gh` is not installed here). Bump
-  nothing else — the code is ready.
+  and client implement the collaborative, trip-scoped model.
+- **Tooling gate cleared.** SDK **1.3.0** is now on npm and `trip-page` is in the
+  registry `main` schema's `type` enum. Verified with SDK 1.3.0:
+  - `validate .` → `✓ plugin is valid`
+  - `pack .` → clean `plugin.zip` (12 files; datasets under `server/data/`, no
+    harness/hero/dev-fixtures leaked)
+  - dev-server smoke test → loads as trip-page, shared attribution, membership
+    gate (403) and missing-trip guard (400) all correct.
+- **Remaining to publish:** cut tag `v1.0.0` == manifest version, GitHub release
+  with `plugin.zip`, generate the entry, `preflight`, then open the one-file
+  registry PR to `mauriceboe/TREK-Plugins`. `gh` is **not** installed in this
+  environment — do the release/PR via the GitHub MCP tools or locally with `gh`.
+- Uses neither `requiredAddons` nor `pluginDependencies`, so both default to `[]`
+  and the registry dependency-parity gate is a no-op (nothing to mirror by hand).
 
 ## How to finish once the SDK is ready
 

@@ -8,6 +8,6 @@
     "pack": "npx -y trek-plugin-sdk pack"
   },
   "devDependencies": {
-    "trek-plugin-sdk": "^1.2.1"
+    "trek-plugin-sdk": "^1.3.0"
   }
 }
