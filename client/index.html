@@ -89,6 +89,7 @@
   .tab:hover { background: var(--bg-hover); color: var(--text-secondary); }
   .tab[aria-selected="true"] { background: var(--accent); color: var(--accent-text); }
   .tab:not(:disabled):active { transform: scale(.97); }
+  .tabsep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-faint); }
 
   /* Cards */
   .grid { display: grid; gap: 14px; }
@@ -266,6 +267,7 @@
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
     refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/>',
+    grid: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',
     sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5 5l1.5 1.5M17.5 17.5L19 19M19 5l-1.5 1.5M6.5 17.5L5 19"/>',
     wave: '<path d="M2 8c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/><path d="M2 14c2 0 2 2 4 2s2-2 4-2 2 2 4 2 2-2 4-2 2 2 4 2"/>'
   };
@@ -328,15 +330,19 @@
   if (window.ResizeObserver) { try { new ResizeObserver(reportHeight).observe(document.body); } catch (_) {} }
 
   var TABS = [
-    { id: 'countdown', icon: 'countdown', en: 'Countdown', de: 'Countdown' },
-    { id: 'nihongo', icon: 'book', en: 'Language', de: 'Sprache' },
-    { id: 'culture', icon: 'culture', en: 'Culture', de: 'Kultur' },
-    { id: 'budget', icon: 'yen', en: 'Budget', de: 'Budget' },
-    { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte' },
-    { id: 'food', icon: 'food', en: 'Food', de: 'Food' },
-    { id: 'season', icon: 'season', en: 'Season', de: 'Saison' },
-    { id: 'safety', icon: 'shield', en: 'Safety', de: 'Sicherheit' },
-    { id: 'settings', icon: 'settings', en: 'Settings', de: 'Einstellungen' }
+    // Prep — before you fly
+    { id: 'countdown', icon: 'countdown', en: 'Countdown', de: 'Countdown', phase: 'prep' },
+    { id: 'season', icon: 'season', en: 'Season', de: 'Saison', phase: 'prep' },
+    { id: 'culture', icon: 'culture', en: 'Culture', de: 'Kultur', phase: 'prep' },
+    { id: 'nihongo', icon: 'book', en: 'Language', de: 'Sprache', phase: 'prep' },
+    // On the ground — during the trip
+    { id: 'budget', icon: 'yen', en: 'Budget', de: 'Budget', phase: 'trip' },
+    { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte', phase: 'trip' },
+    { id: 'food', icon: 'food', en: 'Food', de: 'Food', phase: 'trip' },
+    { id: 'passport', icon: 'grid', en: 'Passport', de: 'Passport', phase: 'trip' },
+    { id: 'safety', icon: 'shield', en: 'Safety', de: 'Sicherheit', phase: 'trip' },
+    // Config
+    { id: 'settings', icon: 'settings', en: 'Settings', de: 'Einstellungen', phase: 'config' }
   ];
 
   function boot() {
@@ -359,9 +365,14 @@
   }
   function renderTabs() {
     var tabs = document.getElementById('tabs'); tabs.innerHTML = '';
+    var lastPhase = null;
     TABS.forEach(function (t) {
+      if (lastPhase && t.phase !== lastPhase) {
+        var sep = document.createElement('span'); sep.className = 'tabsep'; tabs.appendChild(sep);
+      }
+      lastPhase = t.phase;
       var b = document.createElement('button');
-      b.className = 'tab'; b.type = 'button';
+      b.className = 'tab'; b.type = 'button'; b.dataset.tab = t.id;
       b.setAttribute('role', 'tab');
       b.setAttribute('aria-selected', current === t.id ? 'true' : 'false');
       b.innerHTML = svg(t.icon) + '<span>' + esc(T(t.en, t.de)) + '</span>';
@@ -372,8 +383,8 @@
 
   function openTab(id, force) {
     current = id;
-    var tabs = document.getElementById('tabs').children;
-    for (var i = 0; i < tabs.length; i++) tabs[i].setAttribute('aria-selected', TABS[i].id === id ? 'true' : 'false');
+    var btns = document.getElementById('tabs').querySelectorAll('.tab');
+    btns.forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === id ? 'true' : 'false'); });
     var panel = document.getElementById('panel');
     panel.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Loading…', 'Lädt…') + '</div>';
     reportHeight();
@@ -684,81 +695,94 @@
   ];
   var REGION_ORDER = ['Hokkaido', 'Tohoku', 'Kanto', 'Chubu', 'Kansai', 'Chugoku', 'Shikoku', 'Kyushu', 'Okinawa'];
 
+  // Food: just the konbini/ramen/… counters.
   SECTIONS.food = function (panel) {
-    return invoke('/collect/state', 'GET').then(function (d) { renderFood(panel, d); });
-  };
-  function renderFood(panel, d) {
-    var foodCards = FOOD_KINDS.map(function (f) {
-      var c = d.food[f.k] || 0;
-      return '<div class="card" style="padding:12px"><div class="between"><div class="stat"><span class="v">' + c + '</span><span class="k">' + esc(T(f.en, f.de)) + '</span></div>' +
-        '<div class="row"><button class="iconbtn" data-food="' + f.k + '" data-delta="-1">' + svg('minus') + '</button>' +
-        '<button class="iconbtn" data-food="' + f.k + '" data-delta="1">' + svg('plus') + '</button></div></div></div>';
-    }).join('');
-
-    var visitedSet = {}; d.visited.forEach(function (v) { visitedSet[v] = true; });
-    var byRegion = {};
-    d.prefectures.forEach(function (p) { (byRegion[p.region] = byRegion[p.region] || []).push(p); });
-    var mapHtml = REGION_ORDER.filter(function (r) { return byRegion[r]; }).map(function (r) {
-      var tiles = byRegion[r].map(function (p) {
-        return '<div class="pref' + (visitedSet[p.code] ? ' on' : '') + '" data-pref="' + esc(p.code) + '" title="' + esc(p.romaji) + '">' +
-          '<div class="pc">' + esc(p.code.replace('JP-', '')) + '</div>' +
-          '<div class="pn">' + esc(p.name) + '</div>' +
-          '<div class="pj">' + esc(p.jp) + '</div></div>';
+    return invoke('/collect/state', 'GET').then(function (d) {
+      var foodCards = FOOD_KINDS.map(function (f) {
+        var c = d.food[f.k] || 0;
+        return '<div class="card" style="padding:12px"><div class="between"><div class="stat"><span class="v">' + c + '</span><span class="k">' + esc(T(f.en, f.de)) + '</span></div>' +
+          '<div class="row"><button class="iconbtn" data-food="' + f.k + '" data-delta="-1">' + svg('minus') + '</button>' +
+          '<button class="iconbtn" data-food="' + f.k + '" data-delta="1">' + svg('plus') + '</button></div></div></div>';
       }).join('');
-      return '<div class="region"><div class="rname">' + esc(r) + '</div><div class="pref-grid">' + tiles + '</div></div>';
-    }).join('');
+      panel.innerHTML =
+        '<div class="card"><h2>' + svg('food') + T('Food tally', 'Food-Zähler') + '</h2>' +
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' +
+            T('Tap to count every konbini run, ramen bowl and kaiten plate.', 'Zähle jeden Konbini-Stopp, jede Ramen-Schale und jeden Kaiten-Teller.') + '</div>' +
+          '<div class="grid cols3">' + foodCards + '</div></div>';
+      panel.querySelectorAll('[data-food]').forEach(function (b) {
+        b.onclick = function () {
+          invoke('/food/inc', 'POST', { kind: b.getAttribute('data-food'), delta: parseInt(b.getAttribute('data-delta'), 10) })
+            .then(function () { openTab('food', true); });
+        };
+      });
+    });
+  };
 
-    var collectHtml = COLLECT_KINDS.map(function (c) {
-      var items = (d.collections[c.k] || []);
-      var chips = items.map(function (it) {
-        return '<span class="chip static" data-col="' + c.k + '" data-key="' + esc(it.key) + '">' + esc(it.key) + '</span>';
-      }).join('') || '<span class="faint" style="font-size:12px">' + T('none yet', 'noch keine') + '</span>';
-      return '<div style="margin-bottom:12px"><div class="between" style="margin-bottom:6px"><span class="kicker">' + esc(T(c.en, c.de)) + ' (' + items.length + ')</span></div>' +
-        '<div class="row" style="margin-bottom:6px"><input class="fld col-in" data-kind="' + c.k + '" placeholder="' + T('add name…', 'Name hinzufügen…') + '" />' +
-        '<button class="btn sm col-add" data-kind="' + c.k + '">' + svg('plus') + '</button></div>' +
-        '<div class="wrap">' + chips + '</div></div>';
-    }).join('');
+  // Passport: the 47-prefecture region grid + Onsen/Goshuin/Eki collections.
+  SECTIONS.passport = function (panel) {
+    return invoke('/collect/state', 'GET').then(function (d) {
+      var visitedSet = {}; d.visited.forEach(function (v) { visitedSet[v] = true; });
+      var byRegion = {};
+      d.prefectures.forEach(function (p) { (byRegion[p.region] = byRegion[p.region] || []).push(p); });
+      var mapHtml = REGION_ORDER.filter(function (r) { return byRegion[r]; }).map(function (r) {
+        var tiles = byRegion[r].map(function (p) {
+          return '<div class="pref' + (visitedSet[p.code] ? ' on' : '') + '" data-pref="' + esc(p.code) + '" title="' + esc(p.romaji) + '">' +
+            '<div class="pc">' + esc(p.code.replace('JP-', '')) + '</div>' +
+            '<div class="pn">' + esc(p.name) + '</div>' +
+            '<div class="pj">' + esc(p.jp) + '</div></div>';
+        }).join('');
+        return '<div class="region"><div class="rname">' + esc(r) + '</div><div class="pref-grid">' + tiles + '</div></div>';
+      }).join('');
 
-    panel.innerHTML =
-      '<div class="card"><h2>' + svg('compass') + T('Prefecture passport', 'Präfektur-Pass') + ' · ' + d.visited.length + '/' + d.prefectures.length + '</h2>' +
-        '<div style="max-height:560px;overflow:auto">' + mapHtml + '</div></div>' +
-      '<div class="grid cols2" style="margin-top:14px">' +
-        '<div class="card"><h2>' + svg('food') + T('Food tally', 'Food-Zähler') + '</h2><div class="grid cols3">' + foodCards + '</div></div>' +
-        '<div class="card"><h2>' + svg('star') + T('Collections', 'Sammlungen') + '</h2>' + collectHtml + '</div>' +
-      '</div>';
+      var collectHtml = COLLECT_KINDS.map(function (c) {
+        var items = (d.collections[c.k] || []);
+        var chips = items.map(function (it) {
+          return '<span class="chip static" data-col="' + c.k + '" data-key="' + esc(it.key) + '">' + esc(it.key) + '</span>';
+        }).join('') || '<span class="faint" style="font-size:12px">' + T('none yet', 'noch keine') + '</span>';
+        return '<div style="margin-bottom:12px"><div class="between" style="margin-bottom:6px"><span class="kicker">' + esc(T(c.en, c.de)) + ' (' + items.length + ')</span></div>' +
+          '<div class="row" style="margin-bottom:6px"><input class="fld col-in" data-kind="' + c.k + '" placeholder="' + T('add name…', 'Name hinzufügen…') + '" />' +
+          '<button class="btn sm col-add" data-kind="' + c.k + '">' + svg('plus') + '</button></div>' +
+          '<div class="wrap">' + chips + '</div></div>';
+      }).join('');
 
-    panel.querySelectorAll('[data-food]').forEach(function (b) {
-      b.onclick = function () {
-        invoke('/food/inc', 'POST', { kind: b.getAttribute('data-food'), delta: parseInt(b.getAttribute('data-delta'), 10) })
-          .then(function () { openTab('food', true); });
-      };
+      panel.innerHTML =
+        '<div class="grid cols2">' +
+          '<div class="card"><h2>' + svg('grid') + T('Prefecture passport', 'Präfektur-Pass') + ' · ' + d.visited.length + '/' + d.prefectures.length + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Tap a prefecture to stamp it as visited.', 'Tippe eine Präfektur an, um sie als besucht zu stempeln.') + '</div>' +
+            '<div style="max-height:620px;overflow:auto">' + mapHtml + '</div></div>' +
+          '<div class="card"><h2>' + svg('star') + T('Collections', 'Sammlungen') + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Log the onsen, goshuin and eki stamps you gather.', 'Sammle Onsen, Goshuin und Eki-Stempel.') + '</div>' +
+            collectHtml + '</div>' +
+        '</div>';
+
+      panel.querySelectorAll('[data-pref]').forEach(function (b) {
+        b.onclick = function () {
+          invoke('/prefectures/toggle', 'POST', { code: b.getAttribute('data-pref') }).then(function () { openTab('passport', true); });
+        };
+      });
+      panel.querySelectorAll('.col-add').forEach(function (b) {
+        b.onclick = function () {
+          var kind = b.getAttribute('data-kind');
+          var inp = panel.querySelector('.col-in[data-kind="' + kind + '"]');
+          if (!inp.value.trim()) return;
+          invoke('/collect/add', 'POST', { kind: kind, key: inp.value.trim() }).then(function () { openTab('passport', true); });
+        };
+      });
+      panel.querySelectorAll('[data-col]').forEach(function (chip) {
+        chip.style.cursor = 'pointer'; chip.title = T('remove', 'entfernen');
+        chip.onclick = function () {
+          invoke('/collect/add', 'POST', { kind: chip.getAttribute('data-col'), key: chip.getAttribute('data-key') }).then(function () { openTab('passport', true); });
+        };
+      });
     });
-    panel.querySelectorAll('[data-pref]').forEach(function (b) {
-      b.onclick = function () {
-        invoke('/prefectures/toggle', 'POST', { code: b.getAttribute('data-pref') }).then(function () { openTab('food', true); });
-      };
-    });
-    panel.querySelectorAll('.col-add').forEach(function (b) {
-      b.onclick = function () {
-        var kind = b.getAttribute('data-kind');
-        var inp = panel.querySelector('.col-in[data-kind="' + kind + '"]');
-        if (!inp.value.trim()) return;
-        invoke('/collect/add', 'POST', { kind: kind, key: inp.value.trim() }).then(function () { openTab('food', true); });
-      };
-    });
-    panel.querySelectorAll('[data-col]').forEach(function (chip) {
-      chip.style.cursor = 'pointer'; chip.title = T('remove', 'entfernen');
-      chip.onclick = function () {
-        invoke('/collect/add', 'POST', { kind: chip.getAttribute('data-col'), key: chip.getAttribute('data-key') }).then(function () { openTab('food', true); });
-      };
-    });
-  }
+  };
 
   // ---- 7. Season ---------------------------------------------------------
   SECTIONS.season = function (panel) {
     return invoke('/season', 'GET').then(function (d) {
       var months = d.trip_months;
-      var sakuraRows = d.sakura.map(function (s) {
+      var sakura = d.sakura.slice().sort(function (a, b) { return (a.sakura_avg || '').localeCompare(b.sakura_avg || ''); });
+      var sakuraRows = sakura.map(function (s) {
         return '<tr><td><b>' + esc(s.city) + '</b> <span class="faint">' + esc(s.prefecture_code.replace('JP-', '')) + '</span></td>' +
           '<td><span style="color:var(--sakura)">' + svg('season') + '</span> ' + mmdd(s.sakura_avg) + '</td>' +
           '<td>' + mmdd(s.koyo_avg) + '</td></tr>';

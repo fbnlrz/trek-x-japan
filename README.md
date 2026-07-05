@@ -2,30 +2,40 @@
 
 A single-page TREK plugin that bundles everything you need to **prepare** a trip
 to Japan and to **get by once you are on the ground** — organised as one hub page
-with eight tab sections, a private per-user datastore, and three keyless live
+with nine tab sections, a private per-user datastore, and three keyless live
 data feeds.
 
 ## What it does
 
-TREK × Japan adds a full-page tool to your TREK navigation with eight sections:
+TREK × Japan adds a full-page tool to your TREK navigation. Its tabs are sorted
+into the trip's natural flow — first **prep** (before you fly), then **on the
+ground** (during the trip):
+
+**Prep**
 
 - **Countdown & checklist** — days until departure (from a linked TREK trip, or
   from the trip dates you set) plus a grouped prep/packing checklist (JR Pass,
   Pocket WiFi, IC-card app, power adapter, cash, eSIM …).
-- **Language (Nihongo)** — a 46-entry travel phrasebook with a *phrase of the
-  day*, per-user favourites and a category filter. Every phrase shows kanji,
-  kana, Hepburn romaji and an English/German translation.
+- **Season & events** — average sakura and kōyō dates for major cities (sorted
+  by bloom date), plus matsuri/hanabi highlighted when they fall inside your
+  travel window.
 - **Culture & gomi** — 20 etiquette do's & don'ts (onsen, temple/shrine, dining,
   train, tipping) and a searchable garbage-separation helper (moeru/moenai, PET,
   cans, bottles, plastic …).
+- **Language (Nihongo)** — a 46-entry travel phrasebook with a *phrase of the
+  day*, per-user favourites and a category filter. Every phrase shows kanji,
+  kana, Hepburn romaji and an English/German translation.
+
+**On the ground**
+
 - **Yen & budget** — set a planned budget, log expenses, see spent/remaining, and
   a **live ¥ ⇄ home-currency** conversion cached from open.er-api.com.
 - **IC card (Suica)** — carry your balance, charge and spend, keep a ledger, and
   get a warning below your configured threshold.
-- **Food & collecting** — konbini/famichiki/ramen/kaiten counters, a **47-
-  prefecture passport** (region grid) and Onsen/Goshuin/Eki-stamp collections.
-- **Season & events** — average sakura and kōyō dates for major cities, plus
-  matsuri/hanabi highlighted when they fall inside your travel window.
+- **Food** — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for everything
+  you eat along the way.
+- **Passport** — a **47-prefecture passport** (region grid) you stamp as you
+  travel, plus Onsen/Goshuin/Eki-stamp collections.
 - **Safety & weather** — current weather and a 5-day forecast from
   api.open-meteo.com, recent earthquakes from the JMA feed, and quick-access
   emergency phrases.
@@ -43,19 +53,25 @@ The hub in light and dark, opened on the prefecture passport:
 
 ![TREK × Japan hub in light and dark](docs/screenshot.png)
 
-### Every section
+### Prep
 
 **Countdown & checklist** — days to departure and a grouped prep list.
 
 ![Countdown & checklist](docs/tab-countdown.png)
 
-**Language (Nihongo)** — phrase of the day, favourites and category filter.
+**Season & events** — sakura/kōyō dates and matsuri in your travel window.
 
-![Phrasebook](docs/tab-nihongo.png)
+![Season & events](docs/tab-season.png)
 
 **Culture & gomi** — etiquette cards and a searchable garbage-sorting table.
 
 ![Culture & gomi](docs/tab-culture.png)
+
+**Language (Nihongo)** — phrase of the day, favourites and category filter.
+
+![Phrasebook](docs/tab-nihongo.png)
+
+### On the ground
 
 **Yen & budget** — planned budget, expenses and live ¥ ⇄ home-currency FX.
 
@@ -65,21 +81,23 @@ The hub in light and dark, opened on the prefecture passport:
 
 ![IC card](docs/tab-ic.png)
 
-**Food & collecting** — food counters, the 47-prefecture passport and collections.
+**Food** — konbini/ramen/kaiten counters for everything you eat.
 
-![Food & prefecture passport](docs/tab-food.png)
+![Food tally](docs/tab-food.png)
 
-The same section in dark theme:
+**Passport** — the 47-prefecture passport and Onsen/Goshuin/Eki collections.
 
-![Food & prefecture passport, dark theme](docs/tab-food-dark.png)
+![Prefecture passport](docs/tab-passport.png)
 
-**Season & events** — sakura/kōyō dates and matsuri in your travel window.
+The passport in dark theme:
 
-![Season & events](docs/tab-season.png)
+![Prefecture passport, dark theme](docs/tab-passport-dark.png)
 
 **Safety & weather** — live weather, JMA earthquakes and emergency phrases.
 
 ![Safety & weather](docs/tab-safety.png)
+
+### Settings
 
 **Settings** — currency, IC card, weather coordinates and trip window.
 
