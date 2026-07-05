@@ -23,6 +23,7 @@ const ETIQUETTE = require('./data/etiquette.json');
 const GOMI = require('./data/gomi.json');
 const MATSURI = require('./data/matsuri.json');
 const SAKURA = require('./data/sakura.json');
+const CITIES = require('./data/cities.json');
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -46,7 +47,30 @@ const CHECKLIST_ITEMS = [
 const EMERGENCY_PHRASE_CATEGORY = 'emergency';
 const USER_PREF_KEYS = ['home_currency', 'low_ic_threshold', 'ic_card'];
 const USER_PREF_DEFAULTS = { home_currency: 'EUR', low_ic_threshold: '1000' };
-const TRIP_PREF_KEYS = ['weather_lat', 'weather_lon', 'weather_city'];
+const TRIP_PREF_KEYS = ['weather_lat', 'weather_lon', 'weather_city', 'warnings_muted'];
+
+// Read a money value / currency from a native TREK cost item whose exact field
+// names we don't hard-depend on (schema may vary across builds).
+function costAmount(c) {
+  // TREK's BudgetItem uses `total_price` (SDK type). Keep fallbacks for safety.
+  var keys = ['total_price', 'amount', 'value', 'total', 'price'];
+  for (var i = 0; i < keys.length; i++) { var v = c[keys[i]]; if (typeof v === 'number') return v; if (typeof v === 'string' && v !== '' && !isNaN(parseFloat(v))) return parseFloat(v); }
+  return null;
+}
+function costCurrency(c) { return c.currency || c.currency_code || null; }
+
+// Look up coordinates for a place name (matsuri city / sakura city) from the
+// bundled gazetteer, so a plugin-created place lands in Japan, not at 0,0.
+function cityCoords(name) {
+  if (!name) return null;
+  var q = String(name).toLowerCase();
+  for (var i = 0; i < CITIES.length; i++) {
+    var c = CITIES[i];
+    var base = c.name.toLowerCase().replace(/\s*\(.*\)\s*/, '');
+    if (q.indexOf(base) >= 0 || q.indexOf(c.name.toLowerCase()) >= 0) return { lat: c.lat, lng: c.lon };
+  }
+  return null;
+}
 const CURRENCY_SYMBOL = { EUR: '€', USD: '$', GBP: '£', CHF: 'Fr.' };
 const FX_TTL = 6 * 60 * 60 * 1000, WEATHER_TTL = 30 * 60 * 1000, QUAKE_TTL = 15 * 60 * 1000, FETCH_TIMEOUT = 8000;
 
@@ -131,6 +155,7 @@ async function refreshQuake(ctx) { const raw = await timedFetch('https://www.jma
 function dayOfYear(d) { const s = Date.UTC(d.getUTCFullYear(), 0, 0); return Math.floor((Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) - s) / 86400000); }
 function daysUntil(iso) { if (!iso) return null; const t = Date.parse(iso); if (!Number.isFinite(t)) return null; const td = new Date(); return Math.round((t - Date.UTC(td.getUTCFullYear(), td.getUTCMonth(), td.getUTCDate())) / 86400000); }
 function tripDates(trip) { return { title: trip.title || trip.name || null, start: trip.start_date || trip.startDate || null, end: trip.end_date || trip.endDate || null }; }
+function mmToMonth(md) { return md ? parseInt(String(md).split('-')[0], 10) : null; }
 function tripMonths(start, end) { if (!start) return null; const s = new Date(start); if (isNaN(s.getTime())) return null; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e; const m = new Set(); let y = s.getUTCFullYear(), mo = s.getUTCMonth(); const ey = ed.getUTCFullYear(), em = ed.getUTCMonth(); let g = 0; while ((y < ey || (y === ey && mo <= em)) && g < 24) { m.add(mo + 1); mo++; if (mo > 11) { mo = 0; y++; } g++; } return Array.from(m); }
 // Does [start,end] overlap the MM-DD..MM-DD window in any spanned year?
 function overlapsSeason(start, end, fromMD, toMD) {
@@ -234,6 +259,7 @@ const PLUGIN = {
         try {
           const tp = {}; const pr = await ctx.db.query('SELECT key, value FROM trip_prefs WHERE trip_id = ?', id);
           pr.forEach(function (r) { tp[r.key] = r.value; });
+          if (tp.warnings_muted === '1') return out;   // user muted plugin warnings in Settings
           if (!(tp.weather_lat && tp.weather_lon)) out.push({ level: 'info', message: 'TREK × Japan: set a weather location to see the forecast & typhoon risk.' });
           const b = await ctx.db.query('SELECT planned_yen FROM budget WHERE trip_id = ?', id);
           const planned = b.length ? b[0].planned_yen : 0;
@@ -414,7 +440,7 @@ const PLUGIN = {
       const byTrip = await attempt(() => ctx.costs.getByTrip(tripId));
       if (!byTrip.ok) return json(200, { available: false, error: byTrip.error, items: [] });
       const mine = await attempt(() => ctx.costs.listMine());
-      const norm = function (c) { return { id: c.id, name: c.name || c.title || '', amount: c.amount != null ? c.amount : (c.value != null ? c.value : null), currency: c.currency || null }; };
+      const norm = function (c) { return { id: c.id, name: c.name || c.title || '', amount: costAmount(c), currency: costCurrency(c) }; };
       return json(200, { available: true, items: (byTrip.value || []).map(norm), mine_count: mine.ok ? (mine.value || []).length : null });
     } },
     { method: 'POST', path: '/costs/add', auth: true, async handler(req, ctx) {
@@ -422,7 +448,7 @@ const PLUGIN = {
       const { tripId } = await requireTrip(req, ctx, body.tripId);
       const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
       const amount = Math.round(toNum(body.amount, 0));
-      const r = await attempt(() => ctx.costs.create(tripId, { name, amount, currency: 'JPY' }));
+      const r = await attempt(() => ctx.costs.create(tripId, { name, total_price: amount, currency: 'JPY' }));
       if (!r.ok) return json(400, { error: r.error });
       await logActivity(ctx, tripId, 'budget:created');
       return json(200, { item: r.value });
@@ -431,7 +457,7 @@ const PLUGIN = {
       const body = await readBody(req);
       const { tripId } = await requireTrip(req, ctx, body.tripId);
       const itemId = toNum(body.itemId, null); if (itemId == null) return json(400, { error: 'itemId required' });
-      const input = {}; if (body.name != null) input.name = String(body.name).slice(0, 200); if (body.amount != null) input.amount = Math.round(toNum(body.amount, 0));
+      const input = {}; if (body.name != null) input.name = String(body.name).slice(0, 200); if (body.amount != null) input.total_price = Math.round(toNum(body.amount, 0));
       const r = await attempt(() => ctx.costs.update(tripId, itemId, input));
       if (!r.ok) return json(400, { error: r.error });
       return json(200, { item: r.value });
@@ -454,7 +480,7 @@ const PLUGIN = {
       let created = 0, failed = 0, first_error = null;
       for (const s of spends) {
         if (doneSet[s.id]) continue;
-        const r = await attempt(() => ctx.costs.create(tripId, { name: s.note || 'Expense', amount: s.amount_yen, currency: 'JPY' }));
+        const r = await attempt(() => ctx.costs.create(tripId, { name: s.note || 'Expense', total_price: s.amount_yen, currency: 'JPY' }));
         if (r.ok) { created++; await ctx.db.exec('INSERT INTO cost_sync(spend_id, cost_id, at) VALUES(?, ?, ?)', s.id, (r.value && r.value.id) || null, nowIso()); }
         else { failed++; if (!first_error) first_error = r.error; }
       }
@@ -539,8 +565,11 @@ const PLUGIN = {
       const months = tripMonths(td.start, td.end);
       const visited = await ctx.db.query('SELECT code FROM visited_prefs WHERE trip_id = ?', tripId);
       const visitedSet = new Set(visited.map(function (v) { return v.code; }));
-      const matsuri = MATSURI.map(function (m) { return Object.assign({}, m, { in_window: months == null ? false : months.includes(m.month), nearby: visitedSet.has(m.prefecture_code) }); }).sort(function (a, b) { return (Number(b.in_window) - Number(a.in_window)) || (Number(b.nearby) - Number(a.nearby)) || (a.month - b.month); });
-      return json(200, { sakura: SAKURA, matsuri, trip_months: months, trip: { start: td.start, end: td.end } });
+      const prefBy = {}; PREFECTURES.forEach(function (p) { prefBy[p.code] = p; });
+      const enr = function (code) { const p = prefBy[code]; return p ? { pref_name: p.name, region: p.region, pref_jp: p.jp } : {}; };
+      const sakura = SAKURA.map(function (s) { return Object.assign({}, s, enr(s.prefecture_code), { in_window: months == null ? false : months.includes(mmToMonth(s.sakura_avg)), koyo_in_window: months == null ? false : months.includes(mmToMonth(s.koyo_avg)) }); });
+      const matsuri = MATSURI.map(function (m) { return Object.assign({}, m, enr(m.prefecture_code), { in_window: months == null ? false : months.includes(m.month), nearby: visitedSet.has(m.prefecture_code) }); }).sort(function (a, b) { return (Number(b.in_window) - Number(a.in_window)) || (Number(b.nearby) - Number(a.nearby)) || (a.month - b.month); });
+      return json(200, { sakura, matsuri, trip_months: months, trip: { start: td.start, end: td.end } });
     } },
     // Current planner places (db:read:trips)
     { method: 'GET', path: '/itinerary', auth: true, async handler(req, ctx) {
@@ -556,7 +585,11 @@ const PLUGIN = {
       const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
       const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
       const notes = String(body.notes || '').slice(0, 2000);
-      const placeRes = await attempt(() => ctx.places.create(tripId, { name, notes }));
+      // Geo-locate the place from the matsuri/sakura city so the pin lands in Japan.
+      const geo = cityCoords(body.city || name);
+      const placeInput = { name, notes };
+      if (geo) { placeInput.lat = geo.lat; placeInput.lng = geo.lng; }
+      const placeRes = await attempt(() => ctx.places.create(tripId, placeInput));
       if (!placeRes.ok) return json(400, { error: placeRes.error });
       const place = placeRes.value; const placeId = place && place.id;
       let dayId = null, assigned = false;
@@ -564,12 +597,14 @@ const PLUGIN = {
         const dayRes = await attempt(() => ctx.days.create(tripId, { date: String(body.date) }));
         if (dayRes.ok && dayRes.value) { dayId = dayRes.value.id; const asg = await attempt(() => ctx.itinerary.assign(tripId, dayId, placeId)); assigned = asg.ok; }
       }
+      // Short, distinct note for the place-detail hook (not a copy of the description).
+      const hookNote = String(body.hook_note || ('Added from TREK × Japan' + (body.tag ? ' · ' + String(body.tag).slice(0, 40) : ''))).slice(0, 200);
       if (placeId != null) {
         await attempt(() => ctx.meta.set('place', placeId, 'source', 'trek-x-japan'));
-        if (notes) await attempt(() => ctx.meta.set('place', placeId, 'note', notes));
-        await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, by_user=excluded.by_user, at=excluded.at', placeId, tripId, notes || name, userId, nowIso());
+        await attempt(() => ctx.meta.set('place', placeId, 'note', hookNote));
+        await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, by_user=excluded.by_user, at=excluded.at', placeId, tripId, hookNote, userId, nowIso());
       }
-      return json(200, { place: place, day_id: dayId, assigned });
+      return json(200, { place: place, day_id: dayId, assigned, located: !!geo });
     } },
     { method: 'POST', path: '/itinerary/place/update', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
@@ -632,7 +667,15 @@ const PLUGIN = {
       const { tripId } = await requireTrip(req, ctx, body.tripId);
       const r = await attempt(() => ctx.trips.update(tripId, { currency: 'JPY' }));
       if (!r.ok) return json(400, { error: r.error });
-      return json(200, { trip: r.value });
+      return json(200, { trip: r.value, currency: (r.value && r.value.currency) || null });
+    } },
+    // Local city search (bundled JP gazetteer) — fills the trip weather location.
+    { method: 'GET', path: '/geocode', auth: true, async handler(req, ctx) {
+      requireUser(req);
+      const q = String((req.query && (req.query.q || req.query.query)) || '').trim().toLowerCase();
+      let items = CITIES;
+      if (q) items = CITIES.filter(function (c) { return c.name.toLowerCase().includes(q) || (c.pref && c.pref.toLowerCase().includes(q)); });
+      return json(200, { results: items.slice(0, 12).map(function (c) { return { name: c.name, pref: c.pref || null, lat: c.lat, lon: c.lon }; }), total: CITIES.length });
     } },
     { method: 'GET', path: '/trip/meta', auth: true, async handler(req, ctx) {
       const { tripId } = await requireTrip(req, ctx);

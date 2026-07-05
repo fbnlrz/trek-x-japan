@@ -61,7 +61,7 @@
     }
   }
   * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; }
+  html, body { margin: 0; padding: 0; height: 100%; }
   body {
     font-family: var(--font-system);
     background: var(--bg-page);
@@ -70,7 +70,14 @@
     line-height: 1.45;
     -webkit-font-smoothing: antialiased;
   }
-  #root { max-width: 1080px; margin: 0 auto; padding: 20px 18px 40px; }
+  /* Fixed-height shell: header+tabs pinned, content scrolls internally. This
+     works whether the host grows the iframe (trek:resize) or clips it. */
+  #root { height: 100%; display: flex; flex-direction: column; min-height: 0; }
+  .appbar { flex: none; background: var(--bg-page); border-bottom: 1px solid var(--border-faint); }
+  #scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+  .wrapmax { max-width: 1080px; margin: 0 auto; padding: 0 18px; }
+  .appbar .wrapmax { padding-top: 18px; }
+  #scroller .wrapmax { padding-top: 16px; padding-bottom: 44px; }
 
   /* Header */
   .hdr { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -79,8 +86,7 @@
   .hdr .sub { font-size: 12px; color: var(--text-muted); margin-top: 1px; }
 
   /* Tabs */
-  .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 18px;
-    border-bottom: 1px solid var(--border-faint); padding-bottom: 12px; }
+  .tabs { display: flex; flex-wrap: wrap; gap: 6px; padding-bottom: 12px; }
   .tab { display: inline-flex; align-items: center; gap: 7px; padding: 7px 12px;
     border: 1px solid transparent; border-radius: var(--radius-sm); background: none;
     color: var(--text-muted); font-family: inherit; font-size: 12.5px; font-weight: 550;
@@ -115,6 +121,12 @@
     width: 30px; height: 30px; border-radius: var(--radius-sm); cursor: pointer; display: inline-flex;
     align-items: center; justify-content: center; transition: transform .12s, background-color .18s; }
   .iconbtn svg { width: 15px; height: 15px; }
+  /* Constrain icons everywhere they aren't explicitly sized (buttons, chips,
+     table cells) so an unsized inline SVG never balloons to its default box. */
+  button.btn svg { width: 14px; height: 14px; vertical-align: -2px; }
+  button.btn.sm svg { width: 13px; height: 13px; }
+  .chip svg { width: 12px; height: 12px; vertical-align: -1px; }
+  td svg, .listrow svg { width: 14px; height: 14px; }
   .iconbtn:active { transform: scale(.94); }
 
   input.fld, select.fld { width: 100%; padding: 7px 10px; border-radius: var(--radius-sm);
@@ -346,10 +358,19 @@
   var tripInfo = null;
 
   function reportHeight() {
-    var h = Math.ceil(document.body.getBoundingClientRect().height) + 4;
-    post({ type: 'trek:resize', height: Math.min(h, 2000) });
+    var appbar = document.querySelector('.appbar');
+    var panel = document.getElementById('panel');
+    var appH = appbar ? appbar.offsetHeight : 0;
+    var panelH = panel ? panel.getBoundingClientRect().height : 0;
+    var h = Math.ceil(appH + panelH) + 48;
+    // Report the full content height so hosts that grow the iframe show
+    // everything; hosts that clip get internal scrolling via #scroller.
+    post({ type: 'trek:resize', height: Math.max(320, Math.min(h, 4000)) });
   }
-  if (window.ResizeObserver) { try { new ResizeObserver(reportHeight).observe(document.body); } catch (_) {} }
+  // Observe the content panel (its size changes as sections render).
+  var _panelObserver = null;
+  if (window.ResizeObserver) { try { _panelObserver = new ResizeObserver(reportHeight); } catch (_) {} }
+  function armPanelObserver() { var pn = document.getElementById('panel'); if (_panelObserver && pn) { try { _panelObserver.disconnect(); _panelObserver.observe(pn); } catch (_) {} } }
 
   var TABS = [
     // Prep — before you fly
@@ -372,17 +393,18 @@
     // trip-page always carries a tripId; if it is missing the page was opened
     // outside a trip context — say so rather than failing every call.
     if (ctx.tripId == null) {
-      root.innerHTML = '<div class="hdr"><span class="mark">' + svg('compass') + '</span>' +
+      root.innerHTML = '<div class="appbar"><div class="wrapmax"><div class="hdr"><span class="mark">' + svg('compass') + '</span>' +
         '<div><h1>TREK × Japan</h1><div class="sub">' +
         T('Open this tab from inside a trip to start planning together.', 'Öffne diesen Tab in einer Reise, um gemeinsam zu planen.') +
-        '</div></div></div>';
+        '</div></div></div></div></div>';
       reportHeight();
       return;
     }
-    var hdr = document.createElement('div'); hdr.id = 'hdr'; root.appendChild(hdr);
-    var tabs = document.createElement('div'); tabs.className = 'tabs'; tabs.id = 'tabs'; root.appendChild(tabs);
-    var panel = document.createElement('div'); panel.id = 'panel'; root.appendChild(panel);
+    root.innerHTML =
+      '<div class="appbar"><div class="wrapmax"><div id="hdr"></div><div class="tabs" id="tabs" role="tablist"></div></div></div>' +
+      '<div id="scroller"><div class="wrapmax"><div id="panel"></div></div></div>';
     renderHeader(); renderTabs();
+    armPanelObserver();
     var initial = (location.hash || '').replace('#', '');
     openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'countdown');
     invoke('/meta', 'GET').then(function (d) { tripInfo = d; renderHeader(); }).catch(function () {});
@@ -420,6 +442,7 @@
     var btns = document.getElementById('tabs').querySelectorAll('.tab');
     btns.forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === id ? 'true' : 'false'); });
     var panel = document.getElementById('panel');
+    if (!force) { var sc = document.getElementById('scroller'); if (sc) sc.scrollTop = 0; }
     panel.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Loading…', 'Lädt…') + '</div>';
     reportHeight();
     var fn = SECTIONS[id];
@@ -733,12 +756,12 @@
         body = '<div class="banner warn">' + T('The Costs (budget) addon is not enabled on this trip, or your host is pre-3.2.1. Enable it in TREK to push expenses into the native budget.', 'Das Costs-(Budget-)Addon ist für diese Reise nicht aktiviert oder der Host ist älter als 3.2.1. Aktiviere es in TREK, um Ausgaben ins native Budget zu übertragen.') + '</div>';
       } else {
         var rows = (c.items || []).map(function (it) {
-          return '<tr><td>' + esc(it.name) + '</td><td class="num">' + (it.amount != null ? esc(String(it.amount)) + ' ' + esc(it.currency || '') : '—') + '</td>' +
-            '<td><button class="btn sec sm cost-del" data-id="' + esc(String(it.id)) + '">' + svg('minus') + '</button></td></tr>';
+          return '<tr><td>' + esc(it.name) + '</td><td class="num">' + (it.amount != null ? '¥' + Math.round(it.amount).toLocaleString('en-US') : '<span class="faint">—</span>') + '</td>' +
+            '<td style="text-align:right"><button class="btn sec sm cost-del" data-id="' + esc(String(it.id)) + '">' + T('Remove', 'Entfernen') + '</button></td></tr>';
         }).join('') || '<tr><td colspan="3" class="faint">' + T('No native budget items yet', 'Noch keine nativen Budget-Posten') + '</td></tr>';
         body =
           '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Real TREK budget items via ctx.costs — shared with the trip’s Costs tab.', 'Echte TREK-Budget-Posten über ctx.costs — geteilt mit dem Costs-Tab der Reise.') + '</div>' +
-          '<div class="row" style="margin-bottom:10px"><input class="fld" id="cost-name" placeholder="' + T('name', 'Name') + '" /><input class="fld" id="cost-amt" type="number" placeholder="¥" style="max-width:120px" />' +
+          '<div class="row" style="margin-bottom:10px"><input class="fld" id="cost-name" placeholder="' + T('name (e.g. Ryokan)', 'Name (z.B. Ryokan)') + '" /><input class="fld" id="cost-amt" type="number" min="0" placeholder="¥" style="max-width:130px" />' +
           '<button class="btn" id="cost-add">' + T('Add', 'Hinzufügen') + '</button>' +
           '<button class="btn sec" id="cost-sync">' + T('Sync all expenses', 'Alle Ausgaben übertragen') + '</button></div>' +
           '<div class="scrollx"><table class="tbl"><thead><tr><th>' + T('Name', 'Name') + '</th><th>' + T('Amount', 'Betrag') + '</th><th></th></tr></thead><tbody>' + rows + '</tbody></table></div>';
@@ -748,7 +771,9 @@
       if (add) add.onclick = function () {
         var name = card.querySelector('#cost-name').value, amt = card.querySelector('#cost-amt').value;
         if (!name) return notify('warning', T('Enter a name', 'Name eingeben'));
-        invoke('/costs/add', 'POST', { name: name, amount: amt }).then(function () { loadCosts(panel); }).catch(function (e) { notify('error', e.message); });
+        if (!amt || Number(amt) <= 0) return notify('warning', T('Enter an amount in ¥', 'Betrag in ¥ eingeben'));
+        add.disabled = true;
+        invoke('/costs/add', 'POST', { name: name, amount: amt }).then(function () { loadCosts(panel); }).catch(function (e) { add.disabled = false; notify('error', e.message); });
       };
       var sync = card.querySelector('#cost-sync');
       if (sync) sync.onclick = function () {
@@ -912,43 +937,50 @@
       var months = d.trip_months;
       var sakura = d.sakura.slice().sort(function (a, b) { return (a.sakura_avg || '').localeCompare(b.sakura_avg || ''); });
       var sakuraRows = sakura.map(function (s) {
-        return '<tr><td><b>' + esc(s.city) + '</b> <span class="faint">' + esc(s.prefecture_code.replace('JP-', '')) + '</span></td>' +
-          '<td><span style="color:var(--sakura)">' + svg('season') + '</span> ' + mmdd(s.sakura_avg) + '</td>' +
-          '<td>' + mmdd(s.koyo_avg) + '</td></tr>';
+        var inWin = s.in_window || s.koyo_in_window;
+        return '<tr' + (inWin ? ' style="background:var(--bg-hover)"' : '') + '>' +
+          '<td><b>' + esc(s.city) + '</b>' + (s.pref_name ? ' <span class="faint" style="font-size:11px">' + esc(s.pref_name) + ' · ' + esc(s.region || '') + '</span>' : '') + '</td>' +
+          '<td><span style="color:var(--sakura)">●</span> ' + mmdd(s.sakura_avg) + (s.in_window ? ' <span class="chip static" style="padding:1px 7px;font-size:10px">' + T('in dates', 'im Zeitraum') + '</span>' : '') + '</td>' +
+          '<td>' + mmdd(s.koyo_avg) + (s.koyo_in_window ? ' <span class="chip static" style="padding:1px 7px;font-size:10px">' + T('in dates', 'im Zeitraum') + '</span>' : '') + '</td></tr>';
       }).join('');
 
-      var matsuriCards = d.matsuri.slice(0, 40).map(function (m, i) {
+      // Only show matsuri that fall within the trip's month window (fall back to
+      // all only when the trip has no dates).
+      var mlist = months ? d.matsuri.filter(function (m) { return m.in_window; }) : d.matsuri.slice(0, 40);
+      var matsuriCards = mlist.map(function (m, i) {
         var tags = '';
-        if (m.in_window) tags += '<span class="chip static" style="background:var(--accent);color:var(--accent-text)">' + T('in your dates', 'in deinem Zeitraum') + '</span>';
-        if (m.nearby) tags += '<span class="chip static">' + T('nearby', 'in der Nähe') + '</span>';
-        return '<div style="padding:9px 0;border-top:1px solid var(--border-faint)">' +
+        if (m.nearby) tags += '<span class="chip static">' + T('nearby a visited prefecture', 'nahe besuchter Präfektur') + '</span>';
+        var loc = esc(m.city) + (m.pref_name ? ' · ' + esc(m.pref_name) : '') + (m.region ? ' · ' + esc(m.region) : '');
+        return '<div style="padding:10px 0;border-top:1px solid var(--border-faint)">' +
           '<div class="between"><div><b>' + esc(m.name) + '</b> <span class="jp">' + esc(m.name_jp) + '</span></div>' +
-          '<span class="faint">' + monthName(m.month) + '</span></div>' +
-          '<div class="muted" style="font-size:12px">' + esc(m.city) + ' · ' + esc(T(m.blurb_en, m.blurb_de)) + '</div>' +
-          '<div class="between" style="margin-top:6px"><div class="wrap">' + tags + '</div>' +
+          '<span class="chip static">' + monthName(m.month) + '</span></div>' +
+          '<div class="faint" style="font-size:11px;margin-top:2px">' + loc + '</div>' +
+          '<div class="muted" style="font-size:12.5px;margin-top:3px">' + esc(T(m.blurb_en, m.blurb_de)) + '</div>' +
+          '<div class="between" style="margin-top:7px"><div class="wrap">' + tags + '</div>' +
           '<button class="btn sec sm mplan" data-i="' + i + '">' + svg('plus') + ' ' + T('Add to planner', 'Zum Planer') + '</button></div></div>';
-      }).join('');
+      }).join('') || '<div class="loading">' + (months ? T('No matsuri fall within your travel dates.', 'Keine Matsuri in deinem Reisezeitraum.') : T('Set trip dates to see matsuri in your window.', 'Setze Reisedaten, um Matsuri im Zeitraum zu sehen.')) + '</div>';
 
       var windowLine = months
-        ? T('Showing events during: ', 'Events im Zeitraum: ') + months.map(monthName).join(', ')
-        : T('Set trip dates in Settings to highlight events in your window.', 'Setze Reisedaten in den Einstellungen, um Events hervorzuheben.');
+        ? T('Only events during your dates: ', 'Nur Events in deinem Zeitraum: ') + months.map(monthName).join(', ')
+        : T('Set trip dates to see events in your window.', 'Setze Reisedaten, um Events im Zeitraum zu sehen.');
 
       panel.innerHTML =
         '<div class="grid cols2">' +
-          '<div class="card"><h2>' + svg('season') + T('Sakura & koyo', 'Sakura & Kōyō') + '</h2>' +
-            '<div class="scrollx" style="max-height:520px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura', 'Sakura') + '</th><th>' + T('Koyo', 'Kōyō') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
+          '<div class="card"><h2>' + svg('season') + T('Sakura & kōyō', 'Sakura & Kōyō') + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Average full-bloom (cherry) and peak-colour (autumn) dates. Rows in your travel window are highlighted.', 'Durchschnittliche Vollblüte (Kirsche) und Farbhöhepunkt (Herbst). Zeilen in deinem Reisezeitraum sind hervorgehoben.') + '</div>' +
+            '<div class="scrollx" style="max-height:560px;overflow:auto"><table class="tbl"><thead><tr><th>' + T('City', 'Stadt') + '</th><th>' + T('Sakura (bloom)', 'Sakura (Blüte)') + '</th><th>' + T('Kōyō (autumn)', 'Kōyō (Herbst)') + '</th></tr></thead><tbody>' + sakuraRows + '</tbody></table></div></div>' +
           '<div class="card"><h2>' + svg('season') + T('Matsuri & hanabi', 'Matsuri & Hanabi') + '</h2>' +
-            '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + ' · ' + T('“Add to planner” creates a place in the trip.', '„Zum Planer“ legt einen Ort in der Reise an.') + '</div>' +
-            '<div style="max-height:500px;overflow:auto">' + matsuriCards + '</div></div>' +
+            '<div class="foot" style="margin:0 0 6px">' + esc(windowLine) + ' · ' + T('“Add to planner” drops a located place into the trip.', '„Zum Planer“ legt einen verorteten Ort in der Reise an.') + '</div>' +
+            '<div style="max-height:520px;overflow:auto">' + matsuriCards + '</div></div>' +
         '</div>';
 
       panel.querySelectorAll('.mplan').forEach(function (b) {
         b.onclick = function () {
-          var m = d.matsuri[parseInt(b.getAttribute('data-i'), 10)]; if (!m) return;
-          b.disabled = true;
-          invoke('/itinerary/add', 'POST', { name: m.name + ' (' + m.city + ')', notes: T(m.blurb_en, m.blurb_de) })
-            .then(function () { notify('success', T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
-            .catch(function (e) { b.disabled = false; notify('error', e.message || T('Add failed', 'Hinzufügen fehlgeschlagen')); });
+          var m = mlist[parseInt(b.getAttribute('data-i'), 10)]; if (!m) return;
+          b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
+          invoke('/itinerary/add', 'POST', { name: m.name + ' (' + m.city + ')', notes: T(m.blurb_en, m.blurb_de), city: m.city, tag: T('Matsuri', 'Matsuri') + ' · ' + monthName(m.month) })
+            .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
+            .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message || T('Add failed', 'Hinzufügen fehlgeschlagen')); });
         };
       });
     });
@@ -1020,16 +1052,49 @@
           '</div>' +
           '<div class="card"><h2>' + svg('sun') + T('Trip weather location', 'Wetter-Ort der Reise') + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Shared with all trip members — drives the Safety tab.', 'Geteilt mit allen Reise-Mitgliedern — steuert den Sicherheits-Tab.') + '</div>' +
+            '<label class="lbl">' + T('Search a Japanese city', 'Japanische Stadt suchen') + '</label>' +
+            '<input class="fld" id="s-search" placeholder="' + T('type e.g. Kyoto…', 'z.B. Kyoto…') + '" autocomplete="off" />' +
+            '<div id="s-results" style="margin-top:4px"></div>' +
+            '<div class="divider"></div>' +
             '<label class="lbl">' + T('City (label)', 'Stadt (Label)') + '</label><input class="fld" id="s-city" value="' + esc(tp.weather_city || '') + '" placeholder="Tokyo" />' +
             '<div class="row" style="margin-top:10px"><div style="flex:1"><label class="lbl">' + T('Latitude', 'Breitengrad') + '</label><input class="fld" id="s-lat" type="number" step="any" value="' + esc(tp.weather_lat || '') + '" placeholder="35.68" /></div>' +
             '<div style="flex:1"><label class="lbl">' + T('Longitude', 'Längengrad') + '</label><input class="fld" id="s-lon" type="number" step="any" value="' + esc(tp.weather_lon || '') + '" placeholder="139.76" /></div></div>' +
+            '<div class="faint" style="font-size:11px;margin-top:6px">' + T('Pick a city above to fill these automatically, then Save.', 'Wähle oben eine Stadt, um diese automatisch zu füllen, dann Speichern.') + '</div>' +
           '</div>' +
         '</div>' +
         '<div class="card" style="margin-top:14px"><h2>' + svg('yen') + T('Trip integration', 'Reise-Integration') + '</h2>' +
           '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Write into the TREK trip itself (needs your trip-edit permission).', 'Direkt in die TREK-Reise schreiben (benötigt deine Trip-Bearbeitungsrechte).') + '</div>' +
-          '<button class="btn sec" id="s-cur-jpy">' + T('Set trip currency to JPY (¥)', 'Reisewährung auf JPY (¥) setzen') + '</button></div>' +
+          '<div class="wrap"><button class="btn sec" id="s-cur-jpy">' + T('Set trip currency to JPY (¥)', 'Reisewährung auf JPY (¥) setzen') + '</button>' +
+          '<button class="btn sec" id="s-mute">' + (tp.warnings_muted === '1' ? T('Show planner warnings', 'Planer-Warnungen zeigen') : T('Mute planner warnings', 'Planer-Warnungen stummschalten')) + '</button></div>' +
+          '<div class="faint" style="font-size:11px;margin-top:8px">' + T('Muting hides this plugin’s warning bars (weather, budget, Golden Week…) from the trip planner.', 'Stummschalten blendet die Warn-Bars dieses Plugins (Wetter, Budget, Golden Week…) im Planer aus.') + '</div></div>' +
         '<div class="row" style="margin-top:14px"><button class="btn" id="s-save">' + T('Save preferences', 'Einstellungen speichern') + '</button>' +
         '<span class="faint" style="font-size:12px">' + T('Personal settings are per user; the weather location is shared with the trip.', 'Persönliches ist pro Nutzer; der Wetter-Ort gilt für die ganze Reise.') + '</span></div>';
+
+      // City search → fills city/lat/lon
+      var si = panel.querySelector('#s-search'); var res = panel.querySelector('#s-results'); var stmr;
+      function renderResults(list) {
+        if (!list || !list.length) { res.innerHTML = ''; return; }
+        res.innerHTML = list.map(function (r, i) {
+          return '<div class="listrow s-pick" data-i="' + i + '" style="cursor:pointer;padding:6px 4px"><span style="flex:1">' + esc(r.name) + (r.pref ? ' <span class="faint" style="font-size:11px">' + esc(r.pref) + '</span>' : '') + '</span><span class="faint" style="font-size:11px">' + r.lat.toFixed(2) + ', ' + r.lon.toFixed(2) + '</span></div>';
+        }).join('');
+        res.querySelectorAll('.s-pick').forEach(function (row) {
+          row.onclick = function () {
+            var r = list[parseInt(row.getAttribute('data-i'), 10)];
+            panel.querySelector('#s-city').value = r.name.replace(/\s*\(.*\)\s*/, '');
+            panel.querySelector('#s-lat').value = r.lat;
+            panel.querySelector('#s-lon').value = r.lon;
+            res.innerHTML = ''; si.value = '';
+            notify('info', T('Filled — click Save to apply', 'Übernommen — zum Anwenden Speichern klicken'));
+          };
+        });
+      }
+      si.oninput = function () {
+        clearTimeout(stmr); var q = si.value.trim();
+        if (!q) { res.innerHTML = ''; return; }
+        stmr = setTimeout(function () {
+          invoke('/geocode?q=' + encodeURIComponent(q), 'GET').then(function (g) { renderResults(g.results || []); reportHeight(); }).catch(function () {});
+        }, 200);
+      };
 
       panel.querySelector('#s-save').onclick = function () {
         var prefs = {
@@ -1048,8 +1113,15 @@
         }).catch(function (e) { notify('error', e.message); });
       };
       panel.querySelector('#s-cur-jpy').onclick = function () {
-        invoke('/trip/currency', 'POST', {}).then(function () { notify('success', T('Trip currency set to JPY', 'Reisewährung auf JPY gesetzt')); })
+        invoke('/trip/currency', 'POST', {}).then(function (r) { notify('success', T('Trip currency set to', 'Reisewährung gesetzt auf') + ' ' + ((r && r.currency) || 'JPY')); })
           .catch(function (e) { notify('error', e.message || T('Not permitted', 'Nicht erlaubt')); });
+      };
+      panel.querySelector('#s-mute').onclick = function () {
+        var muted = tp.warnings_muted === '1';
+        invoke('/prefs', 'POST', { trip_prefs: { warnings_muted: muted ? '0' : '1' } }).then(function () {
+          notify('success', muted ? T('Planner warnings shown', 'Planer-Warnungen aktiviert') : T('Planner warnings muted', 'Planer-Warnungen stummgeschaltet'));
+          sectionCache = {}; openTab('settings', true);
+        }).catch(function (e) { notify('error', e.message); });
       };
     });
   };
