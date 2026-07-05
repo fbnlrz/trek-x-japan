@@ -1,0 +1,13 @@
+{
+  "name": "trek-x-japan",
+  "version": "1.0.0",
+  "private": true,
+  "type": "commonjs",
+  "scripts": {
+    "dev": "npx -y trek-plugin-sdk dev",
+    "pack": "npx -y trek-plugin-sdk pack"
+  },
+  "devDependencies": {
+    "trek-plugin-sdk": "^1.2.1"
+  }
+}
