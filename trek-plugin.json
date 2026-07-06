@@ -5,7 +5,7 @@
   "apiVersion": 1,
   "type": "trip-page",
   "author": "fbnlrz",
-  "description": "A collaborative in-trip hub for Japan: shared countdown & checklist, budget with live FX, food & prefecture passport, plus deep TREK integration — itinerary writes, native budget, packing & files, place notes, planner warnings and a live activity feed.",
+  "description": "Collaborative in-trip Japan hub: shared checklist, budget with live FX, food & prefecture passport, phrasebook, plus itinerary, native budget, packing, weather & earthquake integration.",
   "homepage": "https://github.com/fbnlrz/trek-x-japan",
   "license": "MIT",
   "icon": "Compass",
