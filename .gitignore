@@ -1,4 +1,3 @@
-node_modules/
-.trek-dev/
 plugin.zip
-*.log
+.trek-dev/
+node_modules/
