@@ -146,13 +146,13 @@ This plugin requests the following permissions, each for a specific reason:
 | `http:outbound:open.er-api.com` | JPY exchange rates for the live yen ⇄ home-currency conversion (open.er-api.com, no API key). |
 | `http:outbound:www.jma.go.jp` | The recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
 
-The manifest also declares `requiredAddons: ["budget"]` — the native-budget
-features (`ctx.costs.*`) need TREK's Costs (budget) addon; everything else works
-without it and degrades gracefully. Each outbound host is declared **both** as an
-`http:outbound:<host>` permission **and** in `egress[]` (identical lists), which
-is what the runtime network guard and the iframe CSP are built from. All three
-endpoints are free and keyless. This is a broad permission set — a version that
-adds still more will require an admin to re-approve the plugin.
+The native-budget features (`ctx.costs.*`) need TREK's **Costs (budget) addon**
+enabled on the trip; everything else works without it and degrades gracefully.
+Each outbound host is declared **both** as an `http:outbound:<host>` permission
+**and** in `egress[]` (identical lists), which is what the runtime network guard
+and the iframe CSP are built from. All three endpoints are free and keyless. This
+is a broad permission set — a version that adds still more will require an admin
+to re-approve the plugin.
 
 ## Setup
 
