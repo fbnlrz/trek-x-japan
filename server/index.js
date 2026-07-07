@@ -26,6 +26,7 @@ const SAKURA = require('./data/sakura.json');
 const CITIES = require('./data/cities.json');
 const TRANSPORT = require('./data/transport.json');
 const SPOTS = require('./data/spots.json');
+const DISHES = require('./data/dishes.json');
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -813,6 +814,28 @@ const PLUGIN = {
       const cities = [];
       SPOTS.forEach(function (s) { if (cities.indexOf(s.city) < 0) cities.push(s.city); });
       return json(200, { cities, spots: SPOTS });
+    } },
+    // ---- Dishes: menu decoder ------------------------------------------------
+    { method: 'GET', path: '/dishes', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const cats = [];
+      DISHES.forEach(function (dsh) { if (cats.indexOf(dsh.cat) < 0) cats.push(dsh.cat); });
+      return json(200, { cats, dishes: DISHES });
+    } },
+    // On-demand translator via the keyless MyMemory API (EN/DE <-> JA).
+    { method: 'POST', path: '/translate', auth: true, async handler(req, ctx) {
+      requireUser(req);
+      const body = await readBody(req);
+      const q = String(body.q || '').slice(0, 500).trim();
+      if (!q) return json(400, { error: 'empty' });
+      const dir = String(body.dir || 'en-ja');
+      const pair = dir === 'ja-en' ? 'ja|en' : dir === 'de-ja' ? 'de|ja' : dir === 'ja-de' ? 'ja|de' : 'en|ja';
+      try {
+        const raw = await timedFetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) + '&langpair=' + pair);
+        const t = raw && raw.responseData && raw.responseData.translatedText;
+        if (!t) return json(200, { text: null, error: 'no result' });
+        return json(200, { text: String(t), match: (raw.responseData && raw.responseData.match) || null });
+      } catch (e) { return json(200, { text: null, error: 'unavailable' }); }
     } },
     // Latest Japan news (English) — cached RSS from Japan Today.
     { method: 'GET', path: '/news', auth: true, async handler(req, ctx) {

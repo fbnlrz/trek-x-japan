@@ -102,7 +102,9 @@
   .tabsep { width: 1px; align-self: stretch; margin: 2px 4px; background: var(--border-faint); }
 
   /* Cards */
-  .grid { display: grid; gap: 14px; }
+  /* align-items:start so a short card never stretches to match a taller
+     neighbour (no more big empty gaps below the countdown/verdict cards). */
+  .grid { display: grid; gap: 14px; align-items: start; }
   .grid.cols2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
   .grid.cols3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .card { background: var(--bg-card); border: 1px solid var(--border-faint);
@@ -261,7 +263,15 @@
   function navigate(to) { post({ type: 'trek:navigate', to: to }); }
   // Open a URL in the host (TREK >=3.2.2). Fire-and-forget; no-ops on older hosts.
   function openExternal(url) { if (url) post({ type: 'trek:openExternal', url: String(url) }); }
-  function openMaps(q) { if (q) openExternal('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q)); }
+  // Robust open: try a real popup first (works when the sandbox allows it), and
+  // fall back to the host bridge for hosts that block popups but support it.
+  function openUrl(url) {
+    if (!url) return;
+    var w = null;
+    try { w = window.open(String(url), '_blank', 'noopener,noreferrer'); } catch (_) {}
+    if (!w) openExternal(url);
+  }
+  function openMaps(q) { if (q) openUrl('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q)); }
   // Speak Japanese via the browser's speech engine (works inside the sandbox,
   // no network/egress). Degrades silently where no ja voice is present.
   function canSpeak() { return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined'; }
@@ -696,6 +706,7 @@
 
   // ---- 2. Nihongo --------------------------------------------------------
   var nihongoState = { cat: 'all', favOnly: false };
+  var translatorState = { dir: 'en-ja', q: '', result: null };
   SECTIONS.nihongo = function (panel) {
     return invoke('/nihongo/state', 'GET').then(function (d) {
       sectionCache.nihongo = d;
@@ -728,8 +739,28 @@
         sayBtn(p.jp) + '</div>';
     }).join('') || '<div class="loading">' + T('No phrases match.', 'Keine Phrasen gefunden.') + '</div>';
 
+    var DIRS = [
+      { v: 'en-ja', l: 'EN → 日本語' }, { v: 'ja-en', l: '日本語 → EN' },
+      { v: 'de-ja', l: 'DE → 日本語' }, { v: 'ja-de', l: '日本語 → DE' }
+    ];
+    var dirOpts = DIRS.map(function (o) { return '<option value="' + o.v + '"' + (translatorState.dir === o.v ? ' selected' : '') + '>' + o.l + '</option>'; }).join('');
+    var targetJa = translatorState.dir.slice(-2) === 'ja';
+    function translatorOut() {
+      if (translatorState.result == null) return '<div class="faint" style="font-size:12px">' + T('Type a sentence and translate.', 'Satz eingeben und übersetzen.') + '</div>';
+      if (translatorState.result === '') return '<div class="banner warn">' + T('Translation unavailable right now.', 'Übersetzung gerade nicht verfügbar.') + '</div>';
+      return '<div class="row" style="align-items:flex-start;gap:8px"><div style="flex:1;font-size:15px">' + esc(translatorState.result) + '</div>' +
+        (SAY && targetJa ? '<button class="iconbtn" data-say="' + esc(translatorState.result) + '" title="' + T('Play (ja)', 'Anhören (ja)') + '">' + svg('speaker') + '</button>' : '') + '</div>';
+    }
+
     panel.innerHTML =
-      '<div class="grid cols2">' +
+      '<div class="card"><h2>' + svg('globe') + T('Translator', 'Übersetzer') + '</h2>' +
+        '<div class="row" style="gap:8px;margin-bottom:8px"><select class="fld" id="tr-dir" style="max-width:170px">' + dirOpts + '</select>' +
+        '<button class="btn sm" id="tr-go">' + T('Translate', 'Übersetzen') + '</button></div>' +
+        '<textarea class="fld" id="tr-in" rows="2" placeholder="' + T('Type text to translate…', 'Text zum Übersetzen…') + '">' + esc(translatorState.q) + '</textarea>' +
+        '<div id="tr-out" style="margin-top:10px">' + translatorOut() + '</div>' +
+        '<div class="foot">' + T('MyMemory · machine translation', 'MyMemory · maschinelle Übersetzung') + '</div>' +
+      '</div>' +
+      '<div class="grid cols2" style="margin-top:14px">' +
         '<div class="card"><h2>' + svg('book') + T('Phrase of the day', 'Phrase des Tages') + '</h2>' +
           '<div style="font-size:24px;font-weight:650">' + esc(pod.jp) + '</div>' +
           '<div class="jp" style="font-size:14px;margin-top:2px">' + esc(pod.romaji) + ' · ' + esc(pod.kana) + '</div>' +
@@ -758,6 +789,18 @@
       if (b.id === 'pod-fav') return;
       b.onclick = function () { toggleFav(b.getAttribute('data-fav'), d, panel); };
     });
+    var trIn = panel.querySelector('#tr-in'); if (trIn) trIn.oninput = function () { translatorState.q = trIn.value; };
+    var trDir = panel.querySelector('#tr-dir'); if (trDir) trDir.onchange = function () { translatorState.dir = trDir.value; };
+    var trGo = panel.querySelector('#tr-go');
+    if (trGo) trGo.onclick = function () {
+      var q = (trIn && trIn.value || '').trim(); translatorState.q = q; if (!q) return;
+      var out = panel.querySelector('#tr-out'); if (out) out.innerHTML = '<span class="spinner"></span>' + T('Translating…', 'Übersetze…');
+      trGo.disabled = true;
+      invoke('/translate', 'POST', { q: q, dir: translatorState.dir }).then(function (r) {
+        translatorState.result = (r && r.text) ? r.text : '';
+        renderNihongo(panel, d); reportHeight();
+      }).catch(function () { translatorState.result = ''; renderNihongo(panel, d); reportHeight(); });
+    };
   }
   function toggleFav(pid, d, panel) {
     invoke('/nihongo/favorite', 'POST', { phrase_id: pid }).then(function (r) {
@@ -808,6 +851,16 @@
         '<div class="card"><h2>' + svg('train') + T('JR Pass — worth it?', 'JR Pass — lohnt es sich?') + '</h2><div id="jr-verdict">' + verdict + '</div></div>' +
         '<div class="card"><h2>' + svg('ticket') + T('Plan your intercity legs', 'Fernstrecken planen') + '</h2>' +
           '<div class="muted" style="font-size:12px;margin:-4px 0 4px">' + T('Shared with the trip. Count each one-way leg you plan to take.', 'Mit der Reise geteilt. Zähle jede geplante Einzelfahrt.') + '</div>' + legRows + '</div>' +
+      '</div>' +
+      '<div class="card" style="margin-top:14px"><h2>' + svg('ticket') + T('Regional passes', 'Regionale Pässe') + '</h2>' +
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 8px">' + T('Cheaper than the nationwide pass if you stay in one area. Approximate prices — check current rates.', 'Günstiger als der landesweite Pass, wenn du in einer Region bleibst. Ungefähre Preise — aktuelle Tarife prüfen.') + '</div>' +
+        [
+          { n: 'JR Kansai Area Pass', p: '¥2,800–7,000 · 1–4 ' + T('day', 'Tage'), c: T('Kansai Airport ⇄ Osaka, Kyoto, Kobe, Nara, Himeji (no shinkansen).', 'Kansai-Flughafen ⇄ Osaka, Kyoto, Kobe, Nara, Himeji (kein Shinkansen).') },
+          { n: 'JR Kansai WIDE Area Pass', p: '¥12,000 · 5 ' + T('day', 'Tage'), c: T('Adds Okayama, Kinosaki, Shirahama + Shin-Osaka⇄Okayama shinkansen.', 'Zusätzlich Okayama, Kinosaki, Shirahama + Shinkansen Shin-Osaka⇄Okayama.') },
+          { n: 'Takayama–Hokuriku Pass', p: '¥19,800 · 5 ' + T('day', 'Tage'), c: T('Nagoya/Osaka ⇄ Takayama, Shirakawa-go, Kanazawa (not Tokaido shinkansen).', 'Nagoya/Osaka ⇄ Takayama, Shirakawa-go, Kanazawa (kein Tokaido-Shinkansen).') },
+          { n: 'JR East Tohoku Area Pass', p: '¥30,000 · 5 ' + T('day', 'Tage'), c: T('Flexible Tokyo ⇄ Tohoku (Sendai, Aomori) shinkansen.', 'Flexibel Tokio ⇄ Tohoku (Sendai, Aomori) Shinkansen.') },
+          { n: 'Sanyo–San\'in Area Pass', p: '¥23,000 · 7 ' + T('day', 'Tage'), c: T('Osaka ⇄ Hiroshima ⇄ Hakata shinkansen + San\'in coast.', 'Osaka ⇄ Hiroshima ⇄ Hakata Shinkansen + San\'in-Küste.') }
+        ].map(function (r) { return '<div class="resv"><span style="flex:1;min-width:0"><b>' + esc(r.n) + '</b><div class="rd">' + esc(r.c) + '</div></span><span class="rt" style="min-width:120px">' + esc(r.p) + '</span></div>'; }).join('') +
       '</div>' +
       '<div class="foot" style="margin-top:10px">' + esc(d.fares_note || '') + '</div>';
     function bump(key, delta) {
@@ -869,21 +922,23 @@
     { n: 'Daimaru · Takashimaya · Isetan', t: T('department stores', 'Kaufhäuser') }
   ];
   SECTIONS.taxfree = function (panel) { renderTaxFree(panel); return Promise.resolve(); };
-  function renderTaxFree(panel) {
+  // Result markup only — recomputed on each keystroke without touching the input
+  // element itself, so the caret never jumps (fixes the "0090" typing bug).
+  function taxResultHtml() {
     var amt = parseFloat(taxState.amount) || 0;
     var rate = taxState.kind === 'consumables' ? 0.08 : 0.10;
     var saving = amt > 0 ? amt * rate / (1 + rate) : 0;
     var pay = amt - saving;
     var minOk = amt >= 5000;
     var capExceeded = taxState.kind === 'consumables' && amt > 500000;
-    var resultHtml = amt > 0
-      ? '<div class="grid cols2" style="gap:10px;margin-top:6px">' +
-          '<div class="stat"><span class="v" style="color:var(--success)">' + yen(saving) + '</span><span class="k">' + T('tax you save', 'gesparte Steuer') + '</span></div>' +
-          '<div class="stat"><span class="v">' + yen(pay) + '</span><span class="k">' + T('you pay (menzei)', 'du zahlst (menzei)') + '</span></div>' +
-        '</div>' +
-        (!minOk ? '<div class="banner warn" style="margin-top:10px">' + T('Below the ¥5,000 minimum per shop per day — tax-free does not apply yet.', 'Unter dem Mindestbetrag von ¥5.000 pro Geschäft und Tag — noch keine Steuerbefreiung.') + '</div>' : '') +
-        (capExceeded ? '<div class="banner warn" style="margin-top:10px">' + T('Consumables are capped at ¥500,000 per shop per day.', 'Verbrauchsgüter sind auf ¥500.000 pro Geschäft und Tag begrenzt.') + '</div>' : '')
-      : '<div class="muted" style="font-size:12.5px;margin-top:6px">' + T('Enter a tax-included (zeikomi) price to see the tax-free amount.', 'Gib einen Preis inkl. Steuer (zeikomi) ein, um den steuerfreien Betrag zu sehen.') + '</div>';
+    if (amt <= 0) return '<div class="muted" style="font-size:12.5px;margin-top:6px">' + T('Enter a tax-included (zeikomi) price to see the tax-free amount.', 'Gib einen Preis inkl. Steuer (zeikomi) ein, um den steuerfreien Betrag zu sehen.') + '</div>';
+    return '<div class="grid cols2" style="gap:10px;margin-top:6px">' +
+        '<div class="stat"><span class="v" style="color:var(--success)">' + yen(saving) + '</span><span class="k">' + T('tax you save', 'gesparte Steuer') + '</span></div>' +
+        '<div class="stat"><span class="v">' + yen(pay) + '</span><span class="k">' + T('you pay (menzei)', 'du zahlst (menzei)') + '</span></div></div>' +
+      (!minOk ? '<div class="banner warn" style="margin-top:10px">' + T('Below the ¥5,000 minimum per shop per day — tax-free does not apply yet.', 'Unter dem Mindestbetrag von ¥5.000 pro Geschäft und Tag — noch keine Steuerbefreiung.') + '</div>' : '') +
+      (capExceeded ? '<div class="banner warn" style="margin-top:10px">' + T('Consumables are capped at ¥500,000 per shop per day.', 'Verbrauchsgüter sind auf ¥500.000 pro Geschäft und Tag begrenzt.') + '</div>' : '');
+  }
+  function renderTaxFree(panel) {
     panel.innerHTML =
       '<div class="grid cols2">' +
         '<div class="card"><h2>' + svg('tag') + T('Tax-free calculator', 'Tax-Free-Rechner') + '</h2>' +
@@ -892,7 +947,7 @@
             '<button class="chip" data-kind="general" aria-pressed="' + (taxState.kind === 'general' ? 'true' : 'false') + '">' + T('General goods · 10%', 'Waren · 10%') + '</button>' +
             '<button class="chip" data-kind="consumables" aria-pressed="' + (taxState.kind === 'consumables' ? 'true' : 'false') + '">' + T('Consumables · 8%', 'Verbrauchsgüter · 8%') + '</button></div>' +
           '<input class="fld" id="tax-amt" type="number" min="0" inputmode="numeric" placeholder="' + T('price incl. tax (¥)', 'Preis inkl. Steuer (¥)') + '" value="' + esc(taxState.amount) + '" />' +
-          resultHtml + '</div>' +
+          '<div id="tax-result">' + taxResultHtml() + '</div></div>' +
         '<div class="card"><h2>' + svg('search') + T('How it works', 'So funktioniert es') + '</h2>' +
           '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6">' +
             '<li>' + T('Minimum ¥5,000 per shop per day.', 'Mindestens ¥5.000 pro Geschäft und Tag.') + '</li>' +
@@ -904,9 +959,9 @@
           TAXFREE_SHOPS.map(function (s) { return '<div class="listrow"><span style="flex:1"><b>' + esc(s.n) + '</b></span><span class="faint" style="font-size:11px">' + esc(s.t) + '</span></div>'; }).join('') +
         '</div>' +
       '</div>';
-    panel.querySelectorAll('[data-kind]').forEach(function (b) { b.onclick = function () { taxState.kind = b.getAttribute('data-kind'); renderTaxFree(panel); reportHeight(); }; });
+    panel.querySelectorAll('[data-kind]').forEach(function (b) { b.onclick = function () { taxState.kind = b.getAttribute('data-kind'); var r = panel.querySelector('#tax-result'); if (r) r.innerHTML = taxResultHtml(); panel.querySelectorAll('[data-kind]').forEach(function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-kind') === taxState.kind ? 'true' : 'false'); }); reportHeight(); }; });
     var inp = panel.querySelector('#tax-amt');
-    inp.oninput = function () { taxState.amount = inp.value; var el = panel.querySelector('#tax-amt'); renderTaxFree(panel); var n = panel.querySelector('#tax-amt'); if (n) { n.focus(); var v = n.value.length; try { n.setSelectionRange(v, v); } catch (_) {} } reportHeight(); };
+    inp.oninput = function () { taxState.amount = inp.value; var r = panel.querySelector('#tax-result'); if (r) r.innerHTML = taxResultHtml(); reportHeight(); };
   }
 
   // ---- Arrival: Visit Japan Web + first-day logistics --------------------
@@ -975,7 +1030,16 @@
           '<input class="fld" id="gomi-q" placeholder="' + T('Search item (e.g. bottle)', 'Gegenstand suchen (z.B. Flasche)') + '" value="' + esc(cultureState.q) + '" />' +
           '<div class="scrollx" style="margin-top:10px"><table class="tbl"><thead><tr><th>' + T('Item', 'Gegenstand') + '</th><th>' + T('Bin', 'Tonne') + '</th><th>' + T('Note', 'Hinweis') + '</th></tr></thead>' +
           '<tbody>' + gomiRows + '</tbody></table></div></div>' +
-      '</div>';
+      '</div>' +
+      '<div class="card" style="margin-top:14px"><h2>' + svg('wave') + T('Onsen guide', 'Onsen-Guide') + '</h2>' +
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 8px">' + T('Bathing etiquette so you can relax like a local.', 'Bade-Etikette, damit du entspannst wie ein Local.') + '</div>' +
+        '<ol style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">' +
+          '<li>' + T('Wash and rinse thoroughly at the shower stations before entering the bath.', 'Vor dem Bad an den Duschplätzen gründlich waschen und abspülen.') + '</li>' +
+          '<li>' + T('No swimsuits — you bathe nude.', 'Keine Badekleidung — man badet nackt.') + '</li>' +
+          '<li>' + T('Keep the small towel out of the water (rest it on your head or the edge).', 'Das kleine Handtuch aus dem Wasser halten (auf den Kopf oder den Rand legen).') + '</li>' +
+          '<li>' + T('Tie long hair up so it stays out of the water.', 'Lange Haare hochbinden, damit sie nicht ins Wasser hängen.') + '</li>' +
+          '<li>' + T('Tattoos are often not allowed — look for tattoo-friendly baths or use a cover patch.', 'Tattoos sind oft nicht erlaubt — nach tattoo-freundlichen Bädern suchen oder Abdeckpflaster nutzen.') + '</li>' +
+          '<li>' + T('No photos, keep your voice down, and don\'t drain or splash the bath.', 'Keine Fotos, leise sein, und das Bad nicht ablassen oder spritzen.') + '</li></ol></div>';
 
     panel.querySelectorAll('[data-ecat]').forEach(function (b) {
       b.onclick = function () { cultureState.cat = b.getAttribute('data-ecat'); renderCulture(panel); reportHeight(); };
@@ -1145,25 +1209,60 @@
   var REGION_ORDER = ['Hokkaido', 'Tohoku', 'Kanto', 'Chubu', 'Kansai', 'Chugoku', 'Shikoku', 'Kyushu', 'Okinawa'];
 
   // Food: just the konbini/ramen/… counters.
+  var dishState = { q: '', cat: 'all' };
   SECTIONS.food = function (panel) {
-    return invoke('/collect/state', 'GET').then(function (d) {
+    return Promise.all([
+      invoke('/collect/state', 'GET'),
+      invoke('/dishes', 'GET').catch(function () { return { cats: [], dishes: [] }; })
+    ]).then(function (rr) {
+      var d = rr[0] || {}, menu = rr[1] || { cats: [], dishes: [] };
       var foodCards = FOOD_KINDS.map(function (f) {
         var c = d.food[f.k] || 0;
         return '<div class="card" style="padding:12px"><div class="between"><div class="stat"><span class="v">' + c + '</span><span class="k">' + esc(T(f.en, f.de)) + '</span></div>' +
           '<div class="row"><button class="iconbtn" data-food="' + f.k + '" data-delta="-1">' + svg('minus') + '</button>' +
           '<button class="iconbtn" data-food="' + f.k + '" data-delta="1">' + svg('plus') + '</button></div></div></div>';
       }).join('');
+      var SAY = canSpeak();
+      function dishRows() {
+        var q = dishState.q.toLowerCase();
+        var list = (menu.dishes || []).filter(function (m) {
+          if (dishState.cat !== 'all' && m.cat !== dishState.cat) return false;
+          if (!q) return true;
+          return (m.en + ' ' + m.de + ' ' + m.romaji + ' ' + m.jp + ' ' + m.key).toLowerCase().indexOf(q) >= 0;
+        });
+        return list.map(function (m) {
+          var note = T(m.note_en, m.note_de);
+          return '<div class="listrow" style="align-items:flex-start"><div style="flex:1">' +
+            '<div><b>' + esc(m.jp) + '</b> <span class="jp">' + esc(m.romaji) + '</span></div>' +
+            '<div class="muted" style="font-size:12.5px">' + esc(T(m.en, m.de)) + '</div>' +
+            (note ? '<div class="faint" style="font-size:11px">' + esc(note) + '</div>' : '') + '</div>' +
+            (SAY ? '<button class="iconbtn" data-say="' + esc(m.jp) + '" title="' + T('Play (ja)', 'Anhören (ja)') + '">' + svg('speaker') + '</button>' : '') + '</div>';
+        }).join('') || '<div class="loading">' + T('No dishes match.', 'Keine Gerichte gefunden.') + '</div>';
+      }
+      var catChips = ['all'].concat(menu.cats || []).map(function (c) {
+        return '<button class="chip" data-dcat="' + esc(c) + '" aria-pressed="' + (dishState.cat === c ? 'true' : 'false') + '">' + esc(c === 'all' ? T('All', 'Alle') : c) + '</button>';
+      }).join('');
       panel.innerHTML =
         '<div class="card"><h2>' + svg('food') + T('Food tally', 'Food-Zähler') + '</h2>' +
           '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' +
             T('Tap to count every konbini run, ramen bowl and kaiten plate.', 'Zähle jeden Konbini-Stopp, jede Ramen-Schale und jeden Kaiten-Teller.') + '</div>' +
-          '<div class="grid cols3">' + foodCards + '</div></div>';
+          '<div class="grid cols3">' + foodCards + '</div></div>' +
+        '<div class="card" style="margin-top:14px"><h2>' + svg('search') + T('Menu decoder', 'Menü-Decoder') + '</h2>' +
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 8px">' + T('Look up a dish on the menu — what it is, and dietary notes.', 'Schlag ein Gericht auf der Karte nach — was es ist, plus Ernährungshinweise.') + '</div>' +
+          '<input class="fld" id="dish-q" placeholder="' + T('Search dish (e.g. ramen, pork, sushi)', 'Gericht suchen (z.B. Ramen, Schwein, Sushi)') + '" value="' + esc(dishState.q) + '" />' +
+          '<div class="wrap" style="margin:8px 0">' + catChips + '</div>' +
+          '<div id="dish-list">' + dishRows() + '</div></div>';
       panel.querySelectorAll('[data-food]').forEach(function (b) {
         b.onclick = function () {
           invoke('/food/inc', 'POST', { kind: b.getAttribute('data-food'), delta: parseInt(b.getAttribute('data-delta'), 10) })
             .then(function () { openTab('food', true); });
         };
       });
+      function refreshDishes() { var el = panel.querySelector('#dish-list'); if (el) el.innerHTML = dishRows(); wireSay(); reportHeight(); }
+      function wireSay() { panel.querySelectorAll('[data-say]').forEach(function (el) { el.onclick = function () { speak(el.getAttribute('data-say')); }; }); }
+      var dq = panel.querySelector('#dish-q'); if (dq) dq.oninput = function () { dishState.q = dq.value; refreshDishes(); };
+      panel.querySelectorAll('[data-dcat]').forEach(function (b) { b.onclick = function () { dishState.cat = b.getAttribute('data-dcat'); panel.querySelectorAll('[data-dcat]').forEach(function (x) { x.setAttribute('aria-pressed', x.getAttribute('data-dcat') === dishState.cat ? 'true' : 'false'); }); refreshDishes(); }; });
+      wireSay();
     });
   };
 
@@ -1349,7 +1448,7 @@
 
       panel.querySelectorAll('.lnk[data-ext]').forEach(function (el) {
         var u = el.getAttribute('data-ext'); if (!u) return;
-        el.title = T('Open article', 'Artikel öffnen'); el.onclick = function () { openExternal(u); };
+        el.title = T('Open article', 'Artikel öffnen'); el.onclick = function () { openUrl(u); };
       });
     });
   };

@@ -33,13 +33,15 @@
     "http:outbound:api.open-meteo.com",
     "http:outbound:open.er-api.com",
     "http:outbound:www.jma.go.jp",
-    "http:outbound:japantoday.com"
+    "http:outbound:japantoday.com",
+    "http:outbound:api.mymemory.translated.net"
   ],
   "egress": [
     "api.open-meteo.com",
     "open.er-api.com",
     "www.jma.go.jp",
-    "japantoday.com"
+    "japantoday.com",
+    "api.mymemory.translated.net"
   ],
   "settings": [
     {
