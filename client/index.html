@@ -183,6 +183,15 @@
   .pref.on { background: var(--accent); border-color: var(--accent); }
   .pref.on .pc, .pref.on .pn, .pref.on .pj { color: var(--accent-text); }
 
+  /* Shared pinned note — shown prominently at the top of the hub for everyone. */
+  .pinnote { display: flex; gap: 10px; align-items: flex-start; padding: 12px 14px; margin-bottom: 14px;
+    border-radius: var(--radius-md); background: color-mix(in srgb, var(--accent) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--accent) 32%, transparent); }
+  .pinnote svg { width: 16px; height: 16px; color: var(--accent); flex: none; margin-top: 1px; }
+  .pinnote .pt { flex: 1; min-width: 0; }
+  .pinnote .pk { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
+  .pinnote .pv { font-size: 14px; color: var(--text); white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
+  .pinnote .pb { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
   .banner { padding: 10px 12px; border-radius: var(--radius-md); font-size: 12.5px; }
   .banner.warn { background: rgba(180,83,9,.12); color: var(--warning); border: 1px solid rgba(180,83,9,.3); }
   .banner.ok { background: rgba(22,163,74,.12); color: var(--success); border: 1px solid rgba(22,163,74,.3); }
@@ -507,6 +516,7 @@
       }).join('');
 
       panel.innerHTML =
+        '<div id="pin-banner"></div>' +
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('countdown') + T('Countdown', 'Countdown') + '</h2>' +
             countHtml +
@@ -546,6 +556,20 @@
     ]).then(function (r) {
       var meta = r[0] || {}, pack = r[1] || {}, files = r[2] || {}, act = r[3] || {};
       var pinVal = meta.pinned_tips || '';
+      var pinBy = meta.pinned_by || '';
+      // The shared pin renders as a prominent note at the very top of the hub so
+      // every member actually sees it (the edit box below just changes it).
+      function renderPinBanner(text, by) {
+        var el = panel.querySelector('#pin-banner'); if (!el) return;
+        if (!text) { el.innerHTML = ''; reportHeight(); return; }
+        el.innerHTML = '<div class="pinnote">' + svg('star') +
+          '<div class="pt"><div class="pk">' + T('Pinned tip', 'Angeheftete Notiz') + '</div>' +
+          '<div class="pv">' + esc(text) + '</div>' +
+          (by ? '<div class="pb">' + T('pinned by ', 'angeheftet von ') + esc(by) + '</div>' : '') +
+          '</div></div>';
+        reportHeight();
+      }
+      renderPinBanner(pinVal, pinBy);
       function na(msg) { return '<div class="faint" style="font-size:12px">' + esc(msg) + '</div>'; }
       var packHtml = pack.available
         ? ((pack.items || []).length
@@ -564,7 +588,7 @@
 
       box.innerHTML =
         '<div class="card"><h2>' + svg('star') + T('Pinned tips (shared)', 'Angeheftete Tipps (geteilt)') + '</h2>' +
-          '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Pinned to the trip via TREK meta — everyone sees it.', 'An die Reise geheftet (TREK-Meta) — alle sehen es.') + '</div>' +
+          '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Shared with everyone on this trip — it shows at the top of the hub for all members.', 'Für alle in dieser Reise sichtbar — erscheint oben im Hub für jedes Mitglied.') + '</div>' +
           '<textarea class="fld" id="pin-text" rows="3" placeholder="' + T('e.g. Meet at Shibuya Hachiko 09:00', 'z.B. Treffpunkt Shibuya Hachiko 09:00') + '">' + esc(pinVal) + '</textarea>' +
           '<div class="row" style="margin-top:8px"><button class="btn" id="pin-save">' + T('Save pin', 'Pin speichern') + '</button>' +
           '<button class="btn sec sm" id="pin-clear">' + T('Clear', 'Löschen') + '</button></div>' +
@@ -574,10 +598,11 @@
         '<div class="card"><h2>' + svg('book') + T('Trip files (from TREK)', 'Reise-Dateien (aus TREK)') + '</h2>' + filesHtml + '</div>';
 
       box.querySelector('#pin-save').onclick = function () {
-        invoke('/trip/pin', 'POST', { text: box.querySelector('#pin-text').value }).then(function () { notify('success', T('Pinned', 'Angeheftet')); }).catch(function (e) { notify('error', e.message); });
+        var v = box.querySelector('#pin-text').value;
+        invoke('/trip/pin', 'POST', { text: v }).then(function () { notify('success', T('Pinned', 'Angeheftet')); renderPinBanner(v.trim(), (meta.me && meta.me.name) || pinBy); }).catch(function (e) { notify('error', e.message); });
       };
       box.querySelector('#pin-clear').onclick = function () {
-        invoke('/trip/pin', 'POST', { text: '' }).then(function () { box.querySelector('#pin-text').value = ''; notify('info', T('Cleared', 'Gelöscht')); }).catch(function (e) { notify('error', e.message); });
+        invoke('/trip/pin', 'POST', { text: '' }).then(function () { box.querySelector('#pin-text').value = ''; renderPinBanner('', ''); notify('info', T('Cleared', 'Gelöscht')); }).catch(function (e) { notify('error', e.message); });
       };
       reportHeight();
     });

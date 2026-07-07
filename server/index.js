@@ -311,14 +311,17 @@ const PLUGIN = {
       const prefs = await loadUserPrefs(ctx, userId);
       // Source of truth is our own trip-scoped table (shared, always available);
       // fall back to the native ctx.meta mirror only if the row is missing.
-      const pinRows = await ctx.db.query('SELECT text FROM pinned_tips WHERE trip_id = ?', tripId);
+      const pinRows = await ctx.db.query('SELECT text, by_user FROM pinned_tips WHERE trip_id = ?', tripId);
       let pinned = pinRows.length ? pinRows[0].text : null;
+      let pinnedBy = null;
+      if (pinned != null && pinRows[0].by_user != null) { const nm = await resolveNames(ctx, [pinRows[0].by_user]); pinnedBy = nm[pinRows[0].by_user] || null; }
       if (pinned == null) { const m = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips')); if (m.ok && m.value) pinned = String(m.value); }
       return json(200, {
         me: { id: userId, name: (req.user && req.user.username) || null },
         trip: { title: td.title, start: td.start, end: td.end, currency: trip.currency || null, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
         prefs, currency_symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency,
         pinned_tips: pinned || null,
+        pinned_by: pinnedBy,
         counts: { phrases: PHRASES.length, prefectures: PREFECTURES.length, etiquette: ETIQUETTE.length, gomi: GOMI.length, matsuri: MATSURI.length, sakura: SAKURA.length, checklist: CHECKLIST_ITEMS.length },
       });
     } },
