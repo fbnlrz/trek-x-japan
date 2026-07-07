@@ -106,6 +106,13 @@
      neighbour (no more big empty gaps below the countdown/verdict cards). */
   .grid { display: grid; gap: 14px; align-items: start; }
   .grid.cols2 { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+  /* Masonry: cards of different heights pack tightly across the full width
+     instead of leaving big gaps in a rigid 2-column grid on wide monitors. */
+  .masonry { column-gap: 14px; column-count: 1; }
+  .masonry > * { break-inside: avoid; -webkit-column-break-inside: avoid; margin: 0 0 14px; width: 100%; }
+  @media (min-width: 680px) { .masonry { column-count: 2; } }
+  @media (min-width: 1120px) { .masonry { column-count: 3; } }
+  @media (min-width: 1640px) { .masonry { column-count: 4; } }
   .grid.cols3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .card { background: var(--bg-card); border: 1px solid var(--border-faint);
     border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 16px 16px; }
@@ -589,7 +596,7 @@
 
       panel.innerHTML =
         '<div id="pin-banner"></div>' +
-        '<div class="grid cols2">' +
+        '<div class="masonry" id="cd-cards">' +
           '<div class="card"><h2>' + svg('countdown') + T('Countdown', 'Countdown') + '</h2>' +
             countHtml +
             '<div class="divider"></div>' +
@@ -602,8 +609,7 @@
             '<div class="progress"><span style="width:' + pct + '%"></span></div>' +
             '<div id="checklist">' + listHtml + '</div>' +
           '</div>' +
-        '</div>' +
-        '<div class="grid cols2" style="margin-top:14px" id="trek-extra"></div>';
+        '</div>';
 
       panel.querySelectorAll('.check').forEach(function (el) {
         el.onclick = function () {
@@ -620,7 +626,7 @@
   // packing (db:read:packing), files (db:read:files), activity (events feed),
   // reservations (ctx.trips.getReservations — flights/trains/stays).
   function loadTrekExtra(panel) {
-    var box = panel.querySelector('#trek-extra'); if (!box) return;
+    var box = panel.querySelector('#cd-cards'); if (!box) return;
     Promise.all([
       invoke('/meta', 'GET').catch(function () { return {}; }),
       invoke('/trip/packing', 'GET').catch(function () { return { available: false, items: [] }; }),
@@ -675,7 +681,7 @@
         ? ((resv.items || []).length ? resvRows : na(T('No flights, trains or stays booked in this trip yet.', 'Noch keine Flüge, Züge oder Unterkünfte in dieser Reise.')))
         : na(T('Native reservations — available in a TREK trip with bookings.', 'Native Buchungen — in einer TREK-Reise mit Reservierungen verfügbar.'));
 
-      box.innerHTML =
+      box.insertAdjacentHTML('beforeend',
         '<div class="card"><h2>' + svg('star') + T('Pinned tips (shared)', 'Angeheftete Tipps (geteilt)') + '</h2>' +
           '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Shared with everyone on this trip — it shows at the top of the hub for all members.', 'Für alle in dieser Reise sichtbar — erscheint oben im Hub für jedes Mitglied.') + '</div>' +
           '<textarea class="fld" id="pin-text" rows="3" placeholder="' + T('e.g. Meet at Shibuya Hachiko 09:00', 'z.B. Treffpunkt Shibuya Hachiko 09:00') + '">' + esc(pinVal) + '</textarea>' +
@@ -685,7 +691,7 @@
         '<div class="card"><h2>' + svg('plane') + T('Transport & stays (from TREK)', 'Transport & Übernachtung (aus TREK)') + '</h2>' + resvHtml + '</div>' +
         '<div class="card"><h2>' + svg('countdown') + T('Live trip activity', 'Live-Reise-Aktivität') + '</h2>' + actHtml + '</div>' +
         '<div class="card"><h2>' + svg('check') + T('Trip packing (from TREK)', 'Reise-Packliste (aus TREK)') + '</h2>' + packHtml + '</div>' +
-        '<div class="card"><h2>' + svg('book') + T('Trip files (from TREK)', 'Reise-Dateien (aus TREK)') + '</h2>' + filesHtml + '</div>';
+        '<div class="card"><h2>' + svg('book') + T('Trip files (from TREK)', 'Reise-Dateien (aus TREK)') + '</h2>' + filesHtml + '</div>');
 
       box.querySelectorAll('.lnk[data-maps]').forEach(function (el) {
         var q = el.getAttribute('data-maps'); if (!q) return;
