@@ -24,6 +24,9 @@ const GOMI = require('./data/gomi.json');
 const MATSURI = require('./data/matsuri.json');
 const SAKURA = require('./data/sakura.json');
 const CITIES = require('./data/cities.json');
+const TRANSPORT = require('./data/transport.json');
+const SPOTS = require('./data/spots.json');
+const DISHES = require('./data/dishes.json');
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -140,8 +143,48 @@ async function resolveNames(ctx, ids) {
 }
 function coords(tp) { const lat = toNum(tp.weather_lat, null), lon = toNum(tp.weather_lon, null); return (lat != null && lon != null) ? { lat, lon } : null; }
 
+// TREK's Reservation shape is loose ({ id, type, [k]: unknown }); read the
+// common fields defensively so flights/trains/stays render whatever the host has.
+function pick(o, keys) { for (const k of keys) { if (o[k] != null && o[k] !== '') return o[k]; } return null; }
+function normReservation(x) {
+  if (!x || typeof x !== 'object') return null;
+  const type = String(pick(x, ['type', 'kind', 'category']) || 'reservation').toLowerCase();
+  return {
+    id: x.id,
+    type,
+    title: pick(x, ['title', 'name', 'label', 'description', 'summary', 'provider', 'carrier', 'hotel']),
+    start: pick(x, ['start', 'start_date', 'startDate', 'date', 'depart', 'departure', 'check_in', 'checkIn', 'from_date']),
+    end: pick(x, ['end', 'end_date', 'endDate', 'until', 'arrive', 'arrival', 'check_out', 'checkOut', 'to_date']),
+    from: pick(x, ['from', 'origin', 'from_location', 'departure_place', 'pickup']),
+    to: pick(x, ['to', 'destination', 'to_location', 'arrival_place', 'dropoff']),
+    location: pick(x, ['location', 'place', 'address', 'city']),
+    ref: pick(x, ['confirmation', 'reference', 'ref', 'booking_ref', 'pnr', 'code']),
+  };
+}
+
 // remote refreshers
 async function timedFetch(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('http ' + res.status); return res.json(); }
+async function timedFetchText(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/rss+xml, application/xml, text/xml, */*' } }); if (!res.ok) throw new Error('http ' + res.status); return res.text(); }
+// Minimal RSS reader: pull a tag's text out of an <item> block, unwrap CDATA,
+// strip inner tags and decode the handful of entities the feed actually uses.
+function rssTag(block, tag) {
+  const m = new RegExp('<' + tag + '(?:\\s[^>]*)?>([\\s\\S]*?)<\\/' + tag + '>', 'i').exec(block);
+  if (!m) return null;
+  let v = m[1].trim().replace(/^<!\[CDATA\[/, '').replace(/\]\]>$/, '').trim().replace(/<[^>]+>/g, '');
+  v = v.replace(/&#8217;/g, '’').replace(/&#8216;/g, '‘').replace(/&#8220;/g, '“').replace(/&#8221;/g, '”')
+       .replace(/&#8230;/g, '…').replace(/&#8211;/g, '–').replace(/&#8212;/g, '—')
+       .replace(/&quot;/g, '"').replace(/&(?:apos|#0?39);/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&');
+  return v.trim();
+}
+async function refreshNews(ctx) {
+  const raw = await timedFetchText('https://japantoday.com/category/national/feed');
+  const items = []; const re = /<item[\s\S]*?<\/item>/gi; let m;
+  while ((m = re.exec(raw)) && items.length < 10) {
+    const b = m[0]; const title = rssTag(b, 'title'); if (!title) continue;
+    items.push({ title, link: rssTag(b, 'link'), date: rssTag(b, 'pubDate') });
+  }
+  const data = { items }; return { data, fetched_at: await cacheSet(ctx, 'news', data) };
+}
 async function refreshFx(ctx) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); const rates = (raw && raw.rates) || {}; const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) }; return { data, fetched_at: await cacheSet(ctx, 'fx', data) }; }
 async function refreshWeather(ctx, lat, lon, key) {
   const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
@@ -231,6 +274,8 @@ const PLUGIN = {
     await ctx.db.migrate('t009_activity', 'CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL, event TEXT, at TEXT)');
     await ctx.db.migrate('t010_place_notes', 'CREATE TABLE IF NOT EXISTS place_notes (place_id INTEGER PRIMARY KEY, trip_id INTEGER, note TEXT, by_user INTEGER, at TEXT)');
     await ctx.db.migrate('t011_cost_sync', 'CREATE TABLE IF NOT EXISTS cost_sync (spend_id INTEGER PRIMARY KEY, cost_id INTEGER, at TEXT)');
+    await ctx.db.migrate('t012_pinned_tips', 'CREATE TABLE IF NOT EXISTS pinned_tips (trip_id INTEGER PRIMARY KEY, text TEXT, by_user INTEGER, at TEXT)');
+    await ctx.db.migrate('t013_transport_legs', 'CREATE TABLE IF NOT EXISTS transport_legs (trip_id INTEGER NOT NULL, leg_key TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 0, by_user INTEGER, at TEXT, PRIMARY KEY(trip_id, leg_key))');
     // personal, per-user
     await ctx.db.migrate('u001_user_prefs', 'CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(user_id, key))');
     await ctx.db.migrate('u002_phrase_favs', 'CREATE TABLE IF NOT EXISTS phrase_favs (user_id INTEGER NOT NULL, phrase_id TEXT NOT NULL, at TEXT, PRIMARY KEY(user_id, phrase_id))');
@@ -290,6 +335,18 @@ const PLUGIN = {
             if (overlapsSeason(s, e, '04-29', '05-06')) out.push({ level: 'info', message: 'TREK × Japan: your dates hit Golden Week — book transport & lodging early, expect crowds.' });
             if (overlapsSeason(s, e, '12-28', '01-04')) out.push({ level: 'info', message: 'TREK × Japan: New Year (o-shogatsu) — many shops and sights close; plan around it.' });
             if (overlapsSeason(s, e, '08-10', '08-17')) out.push({ level: 'info', message: 'TREK × Japan: Obon week — domestic travel peaks and prices rise.' });
+            // Prep checklist behind with departure imminent.
+            const dStart = daysUntil(s), dEnd = daysUntil(e);
+            if (dStart != null && dStart >= 0 && dStart <= 7) {
+              const cl = await ctx.db.query('SELECT COALESCE(SUM(done),0) AS d FROM checklist WHERE trip_id = ?', id);
+              const done = cl.length ? cl[0].d : 0, total = CHECKLIST_ITEMS.length;
+              if (total > 0 && done < Math.ceil(total * 0.6)) out.push({ level: 'warning', message: 'TREK × Japan: departure in ' + dStart + ' day' + (dStart === 1 ? '' : 's') + ', prep checklist only ' + done + '/' + total + ' done.' });
+            }
+            // In-Japan nudge to start the shared prefecture passport.
+            if (dStart != null && dEnd != null && dStart <= 0 && dEnd >= 0) {
+              const vp = await ctx.db.query('SELECT COUNT(*) AS n FROM visited_prefs WHERE trip_id = ?', id);
+              if ((vp.length ? vp[0].n : 0) === 0) out.push({ level: 'info', message: 'TREK × Japan: you are in Japan — start stamping the prefecture passport together.' });
+            }
           }
         } catch (e) { ctx.log.warn('warnings', { msg: String(e && e.message) }); }
         return out;
@@ -300,6 +357,7 @@ const PLUGIN = {
   jobs: [
     { id: 'fx-refresh', schedule: '0 */6 * * *', async handler(ctx) { try { await refreshFx(ctx); } catch (e) { ctx.log.error('fx job', { msg: String(e && e.message) }); } } },
     { id: 'quake-refresh', schedule: '*/15 * * * *', async handler(ctx) { try { await refreshQuake(ctx); } catch (e) { ctx.log.error('quake job', { msg: String(e && e.message) }); } } },
+    { id: 'news-refresh', schedule: '*/30 * * * *', async handler(ctx) { try { await refreshNews(ctx); } catch (e) { ctx.log.error('news job', { msg: String(e && e.message) }); } } },
   ],
 
   routes: [
@@ -308,12 +366,19 @@ const PLUGIN = {
       const { userId, tripId, trip } = await requireTrip(req, ctx);
       const td = tripDates(trip);
       const prefs = await loadUserPrefs(ctx, userId);
-      const pin = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips'));
+      // Source of truth is our own trip-scoped table (shared, always available);
+      // fall back to the native ctx.meta mirror only if the row is missing.
+      const pinRows = await ctx.db.query('SELECT text, by_user FROM pinned_tips WHERE trip_id = ?', tripId);
+      let pinned = pinRows.length ? pinRows[0].text : null;
+      let pinnedBy = null;
+      if (pinned != null && pinRows[0].by_user != null) { const nm = await resolveNames(ctx, [pinRows[0].by_user]); pinnedBy = nm[pinRows[0].by_user] || null; }
+      if (pinned == null) { const m = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips')); if (m.ok && m.value) pinned = String(m.value); }
       return json(200, {
         me: { id: userId, name: (req.user && req.user.username) || null },
         trip: { title: td.title, start: td.start, end: td.end, currency: trip.currency || null, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
         prefs, currency_symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency,
-        pinned_tips: pin.ok ? (pin.value || null) : null,
+        pinned_tips: pinned || null,
+        pinned_by: pinnedBy,
         counts: { phrases: PHRASES.length, prefectures: PREFECTURES.length, etiquette: ETIQUETTE.length, gomi: GOMI.length, matsuri: MATSURI.length, sakura: SAKURA.length, checklist: CHECKLIST_ITEMS.length },
       });
     } },
@@ -603,10 +668,13 @@ const PLUGIN = {
       const { userId, tripId, trip } = await requireTrip(req, ctx, body.tripId);
       const name = String(body.name || '').slice(0, 200); if (!name) return json(400, { error: 'name required' });
       const notes = String(body.notes || '').slice(0, 2000);
-      // Geo-locate the place from the matsuri/sakura city so the pin lands in Japan.
+      // Geo-locate: explicit lat/lng (e.g. a curated spot) wins, else look the
+      // city up in the bundled gazetteer so the pin still lands in Japan.
+      const blat = toNum(body.lat, null), blng = toNum(body.lng != null ? body.lng : body.lon, null);
       const geo = cityCoords(body.city || name);
       const placeInput = { name, notes };
-      if (geo) { placeInput.lat = geo.lat; placeInput.lng = geo.lng; }
+      if (blat != null && blng != null) { placeInput.lat = blat; placeInput.lng = blng; }
+      else if (geo) { placeInput.lat = geo.lat; placeInput.lng = geo.lng; }
       const placeRes = await attempt(() => ctx.places.create(tripId, placeInput));
       if (!placeRes.ok) return json(400, { error: placeRes.error });
       const place = placeRes.value; const placeId = place && place.id;
@@ -626,7 +694,7 @@ const PLUGIN = {
         await attempt(() => ctx.meta.set('place', placeId, 'note', hookNote));
         await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, by_user=excluded.by_user, at=excluded.at', placeId, tripId, hookNote, userId, nowIso());
       }
-      return json(200, { place: place, day_id: dayId, assigned, located: !!geo });
+      return json(200, { place: place, day_id: dayId, assigned, located: (blat != null && blng != null) || !!geo });
     } },
     { method: 'POST', path: '/itinerary/place/update', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
@@ -706,13 +774,88 @@ const PLUGIN = {
     } },
     { method: 'POST', path: '/trip/pin', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
-      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
       const text = String(body.text || '').slice(0, 4000);
-      if (!text) { const r = await attempt(() => ctx.meta.delete('trip', tripId, 'pinned_tips')); return json(200, { pinned_tips: null, cleared: r.ok }); }
-      const r = await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
-      if (!r.ok) return json(400, { error: r.error });
+      // Persist in our own shared table (the reliable store); mirror into the
+      // native ctx.meta best-effort so other TREK surfaces can see it too, but
+      // never fail the request when that host namespace is unavailable.
+      if (!text) {
+        await ctx.db.exec('DELETE FROM pinned_tips WHERE trip_id = ?', tripId);
+        await attempt(() => ctx.meta.delete('trip', tripId, 'pinned_tips'));
+        await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
+        return json(200, { pinned_tips: null, cleared: true });
+      }
+      await ctx.db.exec('INSERT INTO pinned_tips(trip_id, text, by_user, at) VALUES(?, ?, ?, ?) ON CONFLICT(trip_id) DO UPDATE SET text=excluded.text, by_user=excluded.by_user, at=excluded.at', tripId, text, userId, nowIso());
+      await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
       await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
       return json(200, { pinned_tips: text });
+    } },
+    // ---- Transport: JR Pass planner (shared per-trip leg selection) ---------
+    { method: 'GET', path: '/transport', auth: true, async handler(req, ctx) {
+      const { tripId } = await requireTrip(req, ctx);
+      const rows = await ctx.db.query('SELECT leg_key, qty FROM transport_legs WHERE trip_id = ?', tripId);
+      const selected = {}; rows.forEach(function (r) { if (r.qty > 0) selected[r.leg_key] = r.qty; });
+      return json(200, { jr_pass: TRANSPORT.jr_pass, legs: TRANSPORT.legs, fares_note: TRANSPORT.fares_note, selected });
+    } },
+    { method: 'POST', path: '/transport/leg', auth: true, async handler(req, ctx) {
+      const body = await readBody(req);
+      const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
+      const key = String(body.key || '');
+      if (!TRANSPORT.legs.some(function (l) { return l.key === key; })) return json(400, { error: 'unknown leg' });
+      let qty = Math.max(0, Math.min(20, Math.round(toNum(body.qty, 0))));
+      if (qty === 0) await ctx.db.exec('DELETE FROM transport_legs WHERE trip_id = ? AND leg_key = ?', tripId, key);
+      else await ctx.db.exec('INSERT INTO transport_legs(trip_id, leg_key, qty, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(trip_id, leg_key) DO UPDATE SET qty=excluded.qty, by_user=excluded.by_user, at=excluded.at', tripId, key, qty, userId, nowIso());
+      await safeBroadcastTrip(ctx, tripId, 'transport:changed', {});
+      return json(200, { key, qty });
+    } },
+    // ---- Spots: curated must-see catalogue (add straight to the planner) -----
+    { method: 'GET', path: '/spots', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const cities = [];
+      SPOTS.forEach(function (s) { if (cities.indexOf(s.city) < 0) cities.push(s.city); });
+      return json(200, { cities, spots: SPOTS });
+    } },
+    // ---- Dishes: menu decoder ------------------------------------------------
+    { method: 'GET', path: '/dishes', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const cats = [];
+      DISHES.forEach(function (dsh) { if (cats.indexOf(dsh.cat) < 0) cats.push(dsh.cat); });
+      return json(200, { cats, dishes: DISHES });
+    } },
+    // On-demand translator via the keyless MyMemory API (EN/DE <-> JA).
+    { method: 'POST', path: '/translate', auth: true, async handler(req, ctx) {
+      requireUser(req);
+      const body = await readBody(req);
+      const q = String(body.q || '').slice(0, 500).trim();
+      if (!q) return json(400, { error: 'empty' });
+      const dir = String(body.dir || 'en-ja');
+      const pair = dir === 'ja-en' ? 'ja|en' : dir === 'de-ja' ? 'de|ja' : dir === 'ja-de' ? 'ja|de' : 'en|ja';
+      try {
+        const raw = await timedFetch('https://api.mymemory.translated.net/get?q=' + encodeURIComponent(q) + '&langpair=' + pair);
+        const t = raw && raw.responseData && raw.responseData.translatedText;
+        if (!t) return json(200, { text: null, error: 'no result' });
+        return json(200, { text: String(t), match: (raw.responseData && raw.responseData.match) || null });
+      } catch (e) { return json(200, { text: null, error: 'unavailable' }); }
+    } },
+    // Latest Japan news (English) — cached RSS from Japan Today.
+    { method: 'GET', path: '/news', auth: true, async handler(req, ctx) {
+      requireUser(req);
+      const cached = await cacheGet(ctx, 'news');
+      if (cached && cached.data && !isStale(cached, 30 * 60 * 1000)) return json(200, { items: cached.data.items || [], fetched_at: cached.fetched_at, source: 'Japan Today' }, 'private, max-age=300');
+      try { const r = await refreshNews(ctx); return json(200, { items: r.data.items || [], fetched_at: r.fetched_at, source: 'Japan Today' }, 'private, max-age=300'); }
+      catch (e) {
+        if (cached && cached.data) return json(200, { items: cached.data.items || [], fetched_at: cached.fetched_at, source: 'Japan Today', stale: true });
+        return json(200, { items: [], error: 'unavailable' });
+      }
+    } },
+    // Native TREK reservations (flights / trains / stays from Transports & Book).
+    { method: 'GET', path: '/reservations', auth: true, async handler(req, ctx) {
+      const { tripId, userId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.trips.getReservations(tripId, userId));
+      if (!r.ok) return json(200, { available: false, items: [] });
+      const items = (Array.isArray(r.value) ? r.value : []).map(normReservation).filter(Boolean);
+      items.sort(function (a, b) { return String(a.start || '~').localeCompare(String(b.start || '~')); });
+      return json(200, { available: true, items });
     } },
   ],
 };

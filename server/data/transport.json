@@ -1,0 +1,32 @@
+{
+  "jr_pass": [
+    { "days": 7, "ordinary": 50000, "green": 70000 },
+    { "days": 14, "ordinary": 80000, "green": 110000 },
+    { "days": 21, "ordinary": 100000, "green": 140000 }
+  ],
+  "fares_note": "One-way reserved-seat fares, approximate JPY. JR Pass prices are the nationwide Ordinary/Green passes.",
+  "legs": [
+    { "key": "tyo-kyo", "from": "Tokyo", "to": "Kyoto", "line": "Tokaido Shinkansen", "yen": 14170, "min": 140 },
+    { "key": "tyo-osa", "from": "Tokyo", "to": "Osaka", "line": "Tokaido Shinkansen", "yen": 14720, "min": 150 },
+    { "key": "tyo-nag", "from": "Tokyo", "to": "Nagoya", "line": "Tokaido Shinkansen", "yen": 11300, "min": 100 },
+    { "key": "tyo-hir", "from": "Tokyo", "to": "Hiroshima", "line": "Sanyo Shinkansen", "yen": 19440, "min": 240 },
+    { "key": "tyo-hak", "from": "Tokyo", "to": "Fukuoka (Hakata)", "line": "Sanyo Shinkansen", "yen": 23390, "min": 300 },
+    { "key": "tyo-kan", "from": "Tokyo", "to": "Kanazawa", "line": "Hokuriku Shinkansen", "yen": 14380, "min": 150 },
+    { "key": "tyo-nagn", "from": "Tokyo", "to": "Nagano", "line": "Hokuriku Shinkansen", "yen": 8340, "min": 80 },
+    { "key": "tyo-sen", "from": "Tokyo", "to": "Sendai", "line": "Tohoku Shinkansen", "yen": 11210, "min": 95 },
+    { "key": "tyo-aom", "from": "Tokyo", "to": "Aomori", "line": "Tohoku Shinkansen", "yen": 17470, "min": 200 },
+    { "key": "tyo-hakod", "from": "Tokyo", "to": "Hakodate", "line": "Hokkaido Shinkansen", "yen": 23430, "min": 260 },
+    { "key": "tyo-nii", "from": "Tokyo", "to": "Niigata", "line": "Joetsu Shinkansen", "yen": 10570, "min": 100 },
+    { "key": "tyo-kar", "from": "Tokyo", "to": "Karuizawa", "line": "Hokuriku Shinkansen", "yen": 6020, "min": 70 },
+    { "key": "kyo-hir", "from": "Kyoto", "to": "Hiroshima", "line": "Sanyo Shinkansen", "yen": 11620, "min": 100 },
+    { "key": "kyo-kan", "from": "Kyoto", "to": "Kanazawa", "line": "Thunderbird (ltd. exp.)", "yen": 7790, "min": 130 },
+    { "key": "osa-hir", "from": "Osaka", "to": "Hiroshima", "line": "Sanyo Shinkansen", "yen": 10440, "min": 90 },
+    { "key": "osa-hak", "from": "Osaka", "to": "Fukuoka (Hakata)", "line": "Sanyo Shinkansen", "yen": 15600, "min": 150 },
+    { "key": "hir-hak", "from": "Hiroshima", "to": "Fukuoka (Hakata)", "line": "Sanyo Shinkansen", "yen": 9300, "min": 65 },
+    { "key": "nag-kyo", "from": "Nagoya", "to": "Kyoto", "line": "Tokaido Shinkansen", "yen": 5910, "min": 35 },
+    { "key": "nag-osa", "from": "Nagoya", "to": "Osaka", "line": "Tokaido Shinkansen", "yen": 6680, "min": 50 },
+    { "key": "osa-kan", "from": "Osaka", "to": "Kanazawa", "line": "Thunderbird (ltd. exp.)", "yen": 9170, "min": 160 },
+    { "key": "kyo-osa", "from": "Kyoto", "to": "Osaka", "line": "JR Special Rapid", "yen": 580, "min": 30 },
+    { "key": "osa-nar", "from": "Osaka", "to": "Nara", "line": "JR Yamatoji", "yen": 820, "min": 50 }
+  ]
+}
