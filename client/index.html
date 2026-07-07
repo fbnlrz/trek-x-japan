@@ -364,6 +364,8 @@
     speaker: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 8a5 5 0 0 1 0 8"/>',
     external: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
     pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
+    tag: '<path d="M20.5 13.5l-7 7a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12.9V5a1 1 0 0 1 1-1h7.9a2 2 0 0 1 1.4.6l6.2 6.2a2 2 0 0 1 0 2.7z"/><circle cx="8.5" cy="8.5" r="1.3"/>',
+    globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
@@ -449,10 +451,14 @@
     // Prep — before you fly
     { id: 'countdown', icon: 'countdown', en: 'Countdown', de: 'Countdown', phase: 'prep' },
     { id: 'season', icon: 'season', en: 'Season', de: 'Saison', phase: 'prep' },
+    { id: 'spots', icon: 'pin', en: 'Spots', de: 'Spots', phase: 'prep' },
+    { id: 'transport', icon: 'train', en: 'Transport', de: 'Transport', phase: 'prep' },
+    { id: 'arrival', icon: 'plane', en: 'Arrival', de: 'Ankunft', phase: 'prep' },
     { id: 'culture', icon: 'culture', en: 'Culture', de: 'Kultur', phase: 'prep' },
     { id: 'nihongo', icon: 'book', en: 'Language', de: 'Sprache', phase: 'prep' },
     // On the ground — during the trip
     { id: 'budget', icon: 'yen', en: 'Budget', de: 'Budget', phase: 'trip' },
+    { id: 'taxfree', icon: 'tag', en: 'Tax-Free', de: 'Tax-Free', phase: 'trip' },
     { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte', phase: 'trip' },
     { id: 'food', icon: 'food', en: 'Food', de: 'Food', phase: 'trip' },
     { id: 'passport', icon: 'grid', en: 'Passport', de: 'Passport', phase: 'trip' },
@@ -760,6 +766,179 @@
       renderNihongo(panel, d); reportHeight();
     }).catch(function (e) { notify('error', e.message); });
   }
+
+  // ---- Transport: JR Pass planner (shared per-trip leg selection) --------
+  var transportState = null;
+  SECTIONS.transport = function (panel) {
+    return invoke('/transport', 'GET').then(function (d) { transportState = d; renderTransport(panel, d); });
+  };
+  function renderTransport(panel, d) {
+    var legs = d.legs || [], sel = d.selected || {}, passes = d.jr_pass || [];
+    var totalFare = 0, totalTrips = 0;
+    legs.forEach(function (l) { var q = sel[l.key] || 0; totalFare += q * l.yen; totalTrips += q; });
+    var verdict;
+    if (!totalTrips) {
+      verdict = '<div class="muted" style="font-size:12.5px">' + T('Add the intercity legs you plan to ride below — this compares their total fare to the nationwide JR Pass.', 'Füge unten deine geplanten Fernstrecken hinzu — das vergleicht die Gesamtkosten mit dem landesweiten JR Pass.') + '</div>';
+    } else {
+      var best = null;
+      passes.forEach(function (p) { var save = totalFare - p.ordinary; if (!best || save > best.save) best = { p: p, save: save }; });
+      var rows = passes.map(function (p) {
+        var save = totalFare - p.ordinary, good = save > 0;
+        return '<div class="between" style="padding:6px 0;border-top:1px solid var(--border-faint)">' +
+          '<span>' + p.days + '-' + T('day', 'Tage') + ' <span class="faint">' + yen(p.ordinary) + '</span></span>' +
+          '<span style="color:' + (good ? 'var(--success)' : 'var(--text-faint)') + ';font-weight:650">' + (good ? T('saves ', 'spart ') + yen(save) : T('costs ', 'kostet ') + yen(-save) + T(' more', ' mehr')) + '</span></div>';
+      }).join('');
+      verdict = (best && best.save > 0
+          ? '<div class="banner ok" style="margin-bottom:10px">' + T('A JR Pass looks worth it — the ', 'Ein JR Pass lohnt sich — der ') + best.p.days + T('-day pass saves about ', '-Tage-Pass spart ca. ') + yen(best.save) + '.</div>'
+          : '<div class="banner warn" style="margin-bottom:10px">' + T('Individual tickets are cheaper here — a JR Pass is probably not worth it.', 'Einzeltickets sind günstiger — ein JR Pass lohnt sich wohl nicht.') + '</div>') +
+        '<div class="between"><span class="kicker">' + T('Your intercity fares', 'Deine Fernstrecken') + '</span><span class="num">' + yen(totalFare) + '</span></div>' +
+        '<div class="faint" style="font-size:11px;margin-bottom:4px">' + totalTrips + ' ' + T('one-way legs', 'Einzelfahrten') + '</div>' + rows;
+    }
+    var legRows = legs.map(function (l) {
+      var q = sel[l.key] || 0;
+      return '<div class="between" style="padding:8px 0;border-top:1px solid var(--border-faint)">' +
+        '<span style="flex:1;min-width:0"><b>' + esc(l.from) + ' → ' + esc(l.to) + '</b>' +
+        '<div class="faint" style="font-size:11px">' + esc(l.line) + ' · ' + yen(l.yen) + ' · ' + l.min + ' ' + T('min', 'Min') + '</div></span>' +
+        '<span class="row" style="gap:6px;flex:none"><button class="iconbtn leg-dec" data-k="' + esc(l.key) + '">' + svg('minus') + '</button>' +
+        '<span class="num" style="min-width:20px;text-align:center">' + q + '</span>' +
+        '<button class="iconbtn leg-inc" data-k="' + esc(l.key) + '">' + svg('plus') + '</button></span></div>';
+    }).join('');
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('train') + T('JR Pass — worth it?', 'JR Pass — lohnt es sich?') + '</h2><div id="jr-verdict">' + verdict + '</div></div>' +
+        '<div class="card"><h2>' + svg('ticket') + T('Plan your intercity legs', 'Fernstrecken planen') + '</h2>' +
+          '<div class="muted" style="font-size:12px;margin:-4px 0 4px">' + T('Shared with the trip. Count each one-way leg you plan to take.', 'Mit der Reise geteilt. Zähle jede geplante Einzelfahrt.') + '</div>' + legRows + '</div>' +
+      '</div>' +
+      '<div class="foot" style="margin-top:10px">' + esc(d.fares_note || '') + '</div>';
+    function bump(key, delta) {
+      var cur = (transportState.selected[key] || 0) + delta; if (cur < 0) cur = 0; if (cur > 20) cur = 20;
+      invoke('/transport/leg', 'POST', { key: key, qty: cur }).then(function () {
+        if (cur === 0) delete transportState.selected[key]; else transportState.selected[key] = cur;
+        renderTransport(panel, transportState); reportHeight();
+      }).catch(function (e) { notify('error', e.message); });
+    }
+    panel.querySelectorAll('.leg-inc').forEach(function (b) { b.onclick = function () { bump(b.getAttribute('data-k'), 1); }; });
+    panel.querySelectorAll('.leg-dec').forEach(function (b) { b.onclick = function () { bump(b.getAttribute('data-k'), -1); }; });
+  }
+
+  // ---- Spots: curated must-see catalogue ---------------------------------
+  var spotsState = { city: 'all' };
+  SECTIONS.spots = function (panel) {
+    return invoke('/spots', 'GET').then(function (d) { renderSpots(panel, d); });
+  };
+  function renderSpots(panel, d) {
+    var cities = ['all'].concat(d.cities || []);
+    var chips = cities.map(function (c) {
+      return '<button class="chip" data-city="' + esc(c) + '" aria-pressed="' + (spotsState.city === c ? 'true' : 'false') + '">' + esc(c === 'all' ? T('All', 'Alle') : c) + '</button>';
+    }).join('');
+    var catIcon = { shrine: 'season', temple: 'culture', nature: 'wave', city: 'grid', castle: 'shield', food: 'food', art: 'star', park: 'season' };
+    var catName = { shrine: T('shrine', 'Schrein'), temple: T('temple', 'Tempel'), nature: T('nature', 'Natur'), city: T('city', 'Stadt'), castle: T('castle', 'Burg'), food: T('food', 'Essen'), art: T('art', 'Kunst'), park: T('garden', 'Garten') };
+    var list = (d.spots || []).filter(function (s) { return spotsState.city === 'all' || s.city === spotsState.city; });
+    var cards = list.map(function (s, i) {
+      return '<div style="padding:10px 0;border-top:1px solid var(--border-faint)">' +
+        '<div class="between"><span class="row" style="gap:7px;min-width:0">' + svg(catIcon[s.cat] || 'pin') + '<b class="lnk" data-maps="' + esc(s.name + ' ' + s.city) + '">' + esc(s.name) + '</b></span>' +
+        '<span class="chip static">' + esc(s.city) + '</span></div>' +
+        '<div class="muted" style="font-size:12.5px;margin-top:3px">' + esc(T(s.en, s.de)) + '</div>' +
+        '<div class="between" style="margin-top:7px"><span class="faint" style="font-size:11px">' + esc(catName[s.cat] || s.cat) + '</span>' +
+        '<button class="btn sec sm splan" data-i="' + i + '">' + svg('plus') + ' ' + T('Add to planner', 'Zum Planer') + '</button></div></div>';
+    }).join('') || '<div class="loading">' + T('No spots for this city.', 'Keine Spots für diese Stadt.') + '</div>';
+    panel.innerHTML =
+      '<div class="card"><h2>' + svg('pin') + T('Must-see spots', 'Sehenswürdigkeiten') + '</h2>' +
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Curated highlights. Tap a name for Maps, or add it straight to the shared trip planner (located).', 'Kuratierte Highlights. Tippe den Namen für Karten, oder füge ihn direkt in den geteilten Reise-Planer ein (verortet).') + '</div>' +
+        '<div class="wrap" style="margin-bottom:10px">' + chips + '</div><div>' + cards + '</div></div>';
+    panel.querySelectorAll('[data-city]').forEach(function (b) { b.onclick = function () { spotsState.city = b.getAttribute('data-city'); renderSpots(panel, d); reportHeight(); }; });
+    panel.querySelectorAll('.lnk[data-maps]').forEach(function (el) { el.title = T('Open in Maps', 'In Karten öffnen'); el.onclick = function () { openMaps(el.getAttribute('data-maps')); }; });
+    panel.querySelectorAll('.splan').forEach(function (b) {
+      b.onclick = function () {
+        var s = list[parseInt(b.getAttribute('data-i'), 10)]; if (!s) return;
+        b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
+        invoke('/itinerary/add', 'POST', { name: s.name, notes: s.city + ' — ' + T(s.en, s.de), city: s.city, lat: s.lat, lng: s.lon, tag: s.city })
+          .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
+          .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message); });
+      };
+    });
+  }
+
+  // ---- Tax-Free: consumption-tax refund calculator (client-only) ---------
+  var taxState = { amount: '', kind: 'general' };
+  var TAXFREE_SHOPS = [
+    { n: 'Don Quijote', t: T('souvenirs & discount goods', 'Souvenirs & Discount') },
+    { n: 'Matsumoto Kiyoshi', t: T('cosmetics & drugstore', 'Kosmetik & Drogerie') },
+    { n: 'Uniqlo', t: T('clothing', 'Kleidung') },
+    { n: 'Bic Camera / Yodobashi', t: T('electronics', 'Elektronik') },
+    { n: 'Daimaru · Takashimaya · Isetan', t: T('department stores', 'Kaufhäuser') }
+  ];
+  SECTIONS.taxfree = function (panel) { renderTaxFree(panel); return Promise.resolve(); };
+  function renderTaxFree(panel) {
+    var amt = parseFloat(taxState.amount) || 0;
+    var rate = taxState.kind === 'consumables' ? 0.08 : 0.10;
+    var saving = amt > 0 ? amt * rate / (1 + rate) : 0;
+    var pay = amt - saving;
+    var minOk = amt >= 5000;
+    var capExceeded = taxState.kind === 'consumables' && amt > 500000;
+    var resultHtml = amt > 0
+      ? '<div class="grid cols2" style="gap:10px;margin-top:6px">' +
+          '<div class="stat"><span class="v" style="color:var(--success)">' + yen(saving) + '</span><span class="k">' + T('tax you save', 'gesparte Steuer') + '</span></div>' +
+          '<div class="stat"><span class="v">' + yen(pay) + '</span><span class="k">' + T('you pay (menzei)', 'du zahlst (menzei)') + '</span></div>' +
+        '</div>' +
+        (!minOk ? '<div class="banner warn" style="margin-top:10px">' + T('Below the ¥5,000 minimum per shop per day — tax-free does not apply yet.', 'Unter dem Mindestbetrag von ¥5.000 pro Geschäft und Tag — noch keine Steuerbefreiung.') + '</div>' : '') +
+        (capExceeded ? '<div class="banner warn" style="margin-top:10px">' + T('Consumables are capped at ¥500,000 per shop per day.', 'Verbrauchsgüter sind auf ¥500.000 pro Geschäft und Tag begrenzt.') + '</div>' : '')
+      : '<div class="muted" style="font-size:12.5px;margin-top:6px">' + T('Enter a tax-included (zeikomi) price to see the tax-free amount.', 'Gib einen Preis inkl. Steuer (zeikomi) ein, um den steuerfreien Betrag zu sehen.') + '</div>';
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('tag') + T('Tax-free calculator', 'Tax-Free-Rechner') + '</h2>' +
+          '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Foreign visitors can shop without the 10% consumption tax (8% on consumables) at licensed stores.', 'Ausländische Besucher können in lizenzierten Geschäften ohne die 10% Verbrauchsteuer (8% auf Verbrauchsgüter) einkaufen.') + '</div>' +
+          '<div class="wrap" style="margin-bottom:8px">' +
+            '<button class="chip" data-kind="general" aria-pressed="' + (taxState.kind === 'general' ? 'true' : 'false') + '">' + T('General goods · 10%', 'Waren · 10%') + '</button>' +
+            '<button class="chip" data-kind="consumables" aria-pressed="' + (taxState.kind === 'consumables' ? 'true' : 'false') + '">' + T('Consumables · 8%', 'Verbrauchsgüter · 8%') + '</button></div>' +
+          '<input class="fld" id="tax-amt" type="number" min="0" inputmode="numeric" placeholder="' + T('price incl. tax (¥)', 'Preis inkl. Steuer (¥)') + '" value="' + esc(taxState.amount) + '" />' +
+          resultHtml + '</div>' +
+        '<div class="card"><h2>' + svg('search') + T('How it works', 'So funktioniert es') + '</h2>' +
+          '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.6">' +
+            '<li>' + T('Minimum ¥5,000 per shop per day.', 'Mindestens ¥5.000 pro Geschäft und Tag.') + '</li>' +
+            '<li>' + T('Consumables (food, drinks, cosmetics): sealed, exported within 30 days, up to ¥500,000.', 'Verbrauchsgüter (Lebensmittel, Getränke, Kosmetik): versiegelt, Ausfuhr binnen 30 Tagen, bis ¥500.000.') + '</li>' +
+            '<li>' + T('Bring your passport; look for the "Tax-Free" logo at the entrance.', 'Reisepass mitnehmen; auf das "Tax-Free"-Logo am Eingang achten.') + '</li>' +
+            '<li>' + T('Some shops stack discount coupons on top of the exemption.', 'Manche Geschäfte kombinieren Rabattcoupons mit der Befreiung.') + '</li></ul>' +
+          '<div class="divider"></div>' +
+          '<div class="kicker" style="margin-bottom:6px">' + T('Popular tax-free shops', 'Beliebte Tax-Free-Shops') + '</div>' +
+          TAXFREE_SHOPS.map(function (s) { return '<div class="listrow"><span style="flex:1"><b>' + esc(s.n) + '</b></span><span class="faint" style="font-size:11px">' + esc(s.t) + '</span></div>'; }).join('') +
+        '</div>' +
+      '</div>';
+    panel.querySelectorAll('[data-kind]').forEach(function (b) { b.onclick = function () { taxState.kind = b.getAttribute('data-kind'); renderTaxFree(panel); reportHeight(); }; });
+    var inp = panel.querySelector('#tax-amt');
+    inp.oninput = function () { taxState.amount = inp.value; var el = panel.querySelector('#tax-amt'); renderTaxFree(panel); var n = panel.querySelector('#tax-amt'); if (n) { n.focus(); var v = n.value.length; try { n.setSelectionRange(v, v); } catch (_) {} } reportHeight(); };
+  }
+
+  // ---- Arrival: Visit Japan Web + first-day logistics --------------------
+  SECTIONS.arrival = function (panel) {
+    var L = function (label, url, sub) {
+      return '<div class="listrow"><span style="color:var(--text-faint)">' + svg('external') + '</span>' +
+        '<span style="flex:1"><span class="lnk" data-ext="' + esc(url) + '"><b>' + esc(label) + '</b></span>' +
+        (sub ? '<div class="faint" style="font-size:11px">' + esc(sub) + '</div>' : '') + '</span></div>';
+    };
+    panel.innerHTML =
+      '<div class="grid cols2">' +
+        '<div class="card"><h2>' + svg('globe') + T('Visit Japan Web', 'Visit Japan Web') + '</h2>' +
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 8px">' + T('Register immigration and customs online before you land to get QR codes and skip the paper forms.', 'Registriere Einreise und Zoll vorab online, um QR-Codes zu bekommen und die Papierformulare zu sparen.') + '</div>' +
+          '<ul style="margin:0 0 8px;padding-left:18px;font-size:12.5px;line-height:1.6">' +
+            '<li>' + T('Create an account and add each traveller.', 'Konto erstellen und jede reisende Person hinzufügen.') + '</li>' +
+            '<li>' + T('Enter your trip & flight, fill immigration + customs declaration.', 'Reise & Flug eingeben, Einreise + Zollerklärung ausfüllen.') + '</li>' +
+            '<li>' + T('Save the QR codes offline and show them at the airport.', 'QR-Codes offline speichern und am Flughafen zeigen.') + '</li></ul>' +
+          L('Visit Japan Web', 'https://www.vjw.digital.go.jp/', T('official government portal', 'offizielles Regierungsportal')) +
+        '</div>' +
+        '<div class="card"><h2>' + svg('plane') + T('First-day checklist', 'Ankunfts-Checkliste') + '</h2>' +
+          '<div class="muted" style="font-size:12.5px;margin:-4px 0 6px">' + T('At the airport, in order:', 'Am Flughafen, der Reihe nach:') + '</div>' +
+          '<ol style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">' +
+            '<li>' + T('Immigration & customs with your Visit Japan Web QR.', 'Einreise & Zoll mit deinem Visit-Japan-Web-QR.') + '</li>' +
+            '<li>' + T('Exchange your JR Pass voucher (if you bought one).', 'JR-Pass-Voucher einlösen (falls gekauft).') + '</li>' +
+            '<li>' + T('Get / top up an IC card — Suica, Pasmo or Welcome Suica.', 'IC-Karte holen / aufladen — Suica, Pasmo oder Welcome Suica.') + '</li>' +
+            '<li>' + T('Pick up your pocket WiFi or activate your eSIM.', 'Pocket-WiFi abholen oder eSIM aktivieren.') + '</li>' +
+            '<li>' + T('Airport → city: Narita Express / Skyliner (Tokyo), Haruka (Kyoto/Osaka), Nankai (Kansai) or a limousine bus.', 'Flughafen → Stadt: Narita Express / Skyliner (Tokio), Haruka (Kyoto/Osaka), Nankai (Kansai) oder Limousine-Bus.') + '</li></ol>' +
+        '</div>' +
+      '</div>';
+    panel.querySelectorAll('.lnk[data-ext]').forEach(function (el) { el.title = el.getAttribute('data-ext'); el.onclick = function () { openExternal(el.getAttribute('data-ext')); }; });
+    return Promise.resolve();
+  };
 
   // ---- 3. Culture & gomi -------------------------------------------------
   var cultureState = { cat: 'all', q: '' };
@@ -1108,7 +1287,11 @@
 
   // ---- 8. Safety & weather ----------------------------------------------
   SECTIONS.safety = function (panel) {
-    return invoke('/safety', 'GET').then(function (d) {
+    return Promise.all([
+      invoke('/safety', 'GET'),
+      invoke('/news', 'GET').catch(function () { return { items: [] }; })
+    ]).then(function (rr) {
+      var d = rr[0] || {}, news = rr[1] || { items: [] };
       var loc = d.location || {};
       var w = d.weather;
       var weatherHtml;
@@ -1141,6 +1324,12 @@
           '<div class="muted" style="font-size:12px">' + esc(T(p.en, p.de)) + '</div></div></div>';
       }).join('');
 
+      var newsRows = (news.items || []).slice(0, 8).map(function (n) {
+        return '<div class="listrow" style="align-items:flex-start"><span style="color:var(--text-faint)">' + svg('globe') + '</span>' +
+          '<span style="flex:1"><span class="lnk" data-ext="' + esc(n.link || '') + '">' + esc(n.title) + '</span>' +
+          (n.date ? '<div class="faint" style="font-size:11px">' + esc(String(n.date).replace(/\s*\+.*/, '').replace(/^[A-Za-z]{3},\s*/, '')) + '</div>' : '') + '</span></div>';
+      }).join('') || '<div class="faint" style="font-size:12px">' + T('News feed unavailable right now.', 'News-Feed gerade nicht verfügbar.') + '</div>';
+
       panel.innerHTML =
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('sun') + T('Weather', 'Wetter') + ' · ' + locLabel + '</h2>' + weatherHtml +
@@ -1149,8 +1338,19 @@
             '<div class="scrollx"><table class="tbl"><thead><tr><th>Mag</th><th>' + T('Place', 'Ort') + '</th><th></th><th>' + T('Time', 'Zeit') + '</th></tr></thead><tbody>' + quakeRows + '</tbody></table></div>' +
             '<div class="foot">' + T('JMA · updated', 'JMA · aktualisiert') + ' ' + ago(d.quake_fetched_at) + '</div></div>' +
         '</div>' +
-        '<div class="card" style="margin-top:14px"><h2>' + svg('shield') + T('Emergency phrases', 'Notfall-Phrasen') + '</h2>' +
-          '<div class="banner warn" style="margin-bottom:10px">' + T('Police 110 · Fire/Ambulance 119', 'Polizei 110 · Feuer/Krankenwagen 119') + '</div>' + emg + '</div>';
+        '<div class="grid cols2" style="margin-top:14px">' +
+          '<div class="card"><h2>' + svg('globe') + T('Latest Japan news', 'Aktuelle Japan-News') + '</h2>' +
+            '<div class="muted" style="font-size:12px;margin:-4px 0 6px">' + T('English headlines, refreshed regularly. Tap to open the article.', 'Englische Schlagzeilen, regelmäßig aktualisiert. Zum Öffnen antippen.') + '</div>' +
+            newsRows +
+            '<div class="foot">' + esc(news.source || 'Japan Today') + (news.fetched_at ? ' · ' + T('updated', 'aktualisiert') + ' ' + ago(news.fetched_at) : '') + '</div></div>' +
+          '<div class="card"><h2>' + svg('shield') + T('Emergency phrases', 'Notfall-Phrasen') + '</h2>' +
+            '<div class="banner warn" style="margin-bottom:10px">' + T('Police 110 · Fire/Ambulance 119', 'Polizei 110 · Feuer/Krankenwagen 119') + '</div>' + emg + '</div>' +
+        '</div>';
+
+      panel.querySelectorAll('.lnk[data-ext]').forEach(function (el) {
+        var u = el.getAttribute('data-ext'); if (!u) return;
+        el.title = T('Open article', 'Artikel öffnen'); el.onclick = function () { openExternal(u); };
+      });
     });
   };
 

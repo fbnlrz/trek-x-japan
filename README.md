@@ -22,6 +22,13 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Season & events** *(shared window)* — average sakura and kōyō dates for major
   cities (sorted by bloom date), plus matsuri/hanabi highlighted when they fall
   inside the trip's dates.
+- **Spots** *(reference + planner)* — a curated catalogue of must-see sights by
+  city; tap for Maps or add one straight into the shared trip planner (located).
+- **Transport** *(shared)* — a **JR Pass calculator**: count the intercity legs
+  you plan to ride and it compares their total fare against the 7/14/21-day
+  passes, plus a shinkansen route/fare reference.
+- **Arrival** *(reference)* — a Visit Japan Web walkthrough and an ordered
+  first-day checklist (immigration, JR Pass exchange, IC card, WiFi, airport → city).
 - **Culture & gomi** *(reference)* — 20 etiquette do's & don'ts (onsen,
   temple/shrine, dining, train, tipping) and a searchable garbage-separation
   helper (moeru/moenai, PET, cans, bottles, plastic …).
@@ -34,6 +41,9 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Yen & budget** *(shared)* — the trip's planned budget and a shared expense
   log (each entry tagged with the member who added it), spent/remaining, and a
   **live ¥ ⇄ your-currency** conversion cached from open.er-api.com.
+- **Tax-Free** *(calculator)* — work out the consumption-tax refund on a purchase
+  (10% general / 8% consumables), with the ¥5,000 minimum, consumables cap and a
+  list of popular tax-free stores.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -43,7 +53,8 @@ Data is either **shared** with the whole trip or **personal** to you:
   collections.
 - **Safety & weather** *(shared location)* — current weather and a 5-day forecast
   from api.open-meteo.com for the trip's weather location, recent earthquakes
-  from the JMA feed, and quick-access emergency phrases.
+  from the JMA feed, the latest **English-language Japan news** headlines, and
+  quick-access emergency phrases.
 
 **Deep TREK 3.2.1 integration.** Beyond its own shared board, the hub plugs into
 the trip planner itself: it reads the trip's **native packing list** and
@@ -145,6 +156,7 @@ This plugin requests the following permissions, each for a specific reason:
 | `http:outbound:api.open-meteo.com` | Current weather and the 5-day forecast for the trip's weather location (Open-Meteo, no API key). |
 | `http:outbound:open.er-api.com` | JPY exchange rates for the live yen ⇄ home-currency conversion (open.er-api.com, no API key). |
 | `http:outbound:www.jma.go.jp` | The recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
+| `http:outbound:japantoday.com` | Latest English-language Japan news headlines on the Safety tab (Japan Today national RSS feed, no API key). |
 
 The native-budget features (`ctx.costs.*`) need TREK's **Costs (budget) addon**
 enabled on the trip; everything else works without it and degrades gracefully.
