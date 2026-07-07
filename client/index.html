@@ -177,6 +177,10 @@
   button.btn.sm svg { width: 13px; height: 13px; }
   .chip svg { width: 12px; height: 12px; vertical-align: -1px; }
   td svg, .listrow svg { width: 14px; height: 14px; }
+  .banner svg { width: 14px; height: 14px; vertical-align: -2px; flex: none; }
+  /* Safety net: any inline icon that slips through a specific rule stays small
+     instead of ballooning to fill its container. */
+  .card svg, .wt svg { max-width: 22px; max-height: 22px; }
   .iconbtn:active { transform: scale(.94); }
 
   input.fld, select.fld { width: 100%; padding: 7px 10px; border-radius: var(--radius-sm);
