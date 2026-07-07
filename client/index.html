@@ -113,6 +113,43 @@
   @media (min-width: 680px) { .masonry { column-count: 2; } }
   @media (min-width: 1120px) { .masonry { column-count: 3; } }
   @media (min-width: 1640px) { .masonry { column-count: 4; } }
+
+  /* ===== Dashboard widgets: bento grid of compact tiles ===== */
+  .bento { display: grid; gap: 12px; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 150px; grid-auto-flow: row dense; }
+  @media (min-width: 640px)  { .bento { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 1080px) { .bento { grid-template-columns: repeat(6, 1fr); } }
+  .bento .w2 { grid-column: span 2; } .bento .w3 { grid-column: span 3; }
+  .bento .h2 { grid-row: span 2; }
+  @media (max-width: 639px) { .bento .w3 { grid-column: span 2; } }
+  .wt { background: var(--bg-card); border: 1px solid var(--border-faint); border-radius: var(--radius-lg);
+    padding: 14px 15px; box-shadow: var(--shadow-card); overflow: hidden; display: flex; flex-direction: column;
+    min-width: 0; text-align: left; }
+  .wt.link { cursor: pointer; transition: transform .15s ease, box-shadow .15s ease; }
+  .wt.link:hover { transform: translateY(-2px); box-shadow: 0 2px 4px rgba(0,0,0,.06), 0 14px 30px rgba(0,0,0,.10); }
+  .wt.link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .wt.accentbg { background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 15%, var(--bg-card)), var(--bg-card) 68%); }
+  .wt.scroll { overflow-y: auto; }
+  .wth { display: flex; align-items: center; gap: 7px; color: var(--text-muted); margin-bottom: 9px; flex: none; }
+  .wth svg { width: 14px; height: 14px; color: var(--accent); }
+  .wth .lbl { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .wth .rt { margin-left: auto; font-size: 10.5px; color: var(--text-faint); font-weight: 600; }
+  .wbig { font-size: 40px; font-weight: 760; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .wbig small { font-size: 14px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
+  .wkick { font-size: 10.5px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-faint); margin-top: 5px; }
+  .wmeta { font-size: 11.5px; color: var(--text-muted); margin-top: auto; padding-top: 8px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .wbar { height: 7px; border-radius: 99px; background: var(--bg-sunken); overflow: hidden; margin-top: 7px; }
+  .wbar > span { display: block; height: 100%; background: var(--accent); }
+  .wstat { display: flex; gap: 14px; } .wstat .s { display: flex; flex-direction: column; }
+  .wstat .v { font-size: 19px; font-weight: 720; font-variant-numeric: tabular-nums; }
+  .wstat .k { font-size: 10px; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); }
+  .wpref { display: grid; grid-template-columns: repeat(auto-fill, minmax(12px, 1fr)); gap: 3px; margin-top: 8px; }
+  .wpref i { aspect-ratio: 1; border-radius: 3px; background: var(--bg-sunken); }
+  .wpref i.on { background: var(--accent); }
+  .wjp { font-size: 17px; font-weight: 650; letter-spacing: .01em; }
+  .wli { font-size: 12px; padding: 5px 0; border-top: 1px solid var(--border-faint); color: var(--text-secondary); }
+  .wli:first-child { border-top: 0; }
+  .wt.scroll::-webkit-scrollbar { width: 7px; }
+  .wt.scroll::-webkit-scrollbar-thumb { background: var(--border-faint); border-radius: 99px; }
   .grid.cols3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .card { background: var(--bg-card); border: 1px solid var(--border-faint);
     border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 16px 16px; }
@@ -383,6 +420,7 @@
     pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
     tag: '<path d="M20.5 13.5l-7 7a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12.9V5a1 1 0 0 1 1-1h7.9a2 2 0 0 1 1.4.6l6.2 6.2a2 2 0 0 1 0 2.7z"/><circle cx="8.5" cy="8.5" r="1.3"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18"/>',
+    gauge: '<path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 15l4-4"/><circle cx="12" cy="15" r="1.3"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
@@ -465,6 +503,8 @@
   function armPanelObserver() { var pn = document.getElementById('panel'); if (_panelObserver && pn) { try { _panelObserver.disconnect(); _panelObserver.observe(pn); } catch (_) {} } }
 
   var TABS = [
+    // At-a-glance overview
+    { id: 'dashboard', icon: 'gauge', en: 'Dashboard', de: 'Dashboard', phase: 'home' },
     // Prep — before you fly
     { id: 'countdown', icon: 'countdown', en: 'Countdown', de: 'Countdown', phase: 'prep' },
     { id: 'season', icon: 'season', en: 'Season', de: 'Saison', phase: 'prep' },
@@ -502,7 +542,7 @@
     renderHeader(); renderTabs();
     armPanelObserver();
     var initial = (location.hash || '').replace('#', '');
-    openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'countdown');
+    openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'dashboard');
     invoke('/meta', 'GET').then(function (d) { tripInfo = d; renderHeader(); }).catch(function () {});
   }
   function renderHeader() {
@@ -554,6 +594,75 @@
   // Sections
   // =======================================================================
   var SECTIONS = {};
+
+  // ---- 0. Dashboard: at-a-glance widgets (bento) ------------------------
+  SECTIONS.dashboard = function (panel) {
+    var g = function (s, fb) { return invoke(s, 'GET').catch(function () { return fb; }); };
+    return Promise.all([
+      g('/checklist', {}), g('/meta', {}), g('/budget/state', {}), g('/safety', {}),
+      g('/reservations', { items: [] }), g('/collect/state', { food: {}, visited: [], prefectures: [], collections: {} }),
+      g('/news', { items: [] }), g('/transport', { legs: [], selected: {}, jr_pass: [] }),
+      g('/nihongo/state', {}), g('/spots', { spots: [] }), g('/ic/state', {})
+    ]).then(function (r) {
+      renderDashboard(panel, { chk: r[0] || {}, meta: r[1] || {}, bud: r[2] || {}, saf: r[3] || {}, resv: r[4] || {}, col: r[5] || {}, news: r[6] || {}, tr: r[7] || {}, nih: r[8] || {}, sp: r[9] || {}, ic: r[10] || {} });
+    });
+  };
+  function renderDashboard(panel, d) {
+    var SAY = canSpeak();
+    var trip = d.chk.trip || {}, days = trip.days_until_start, cdMain, cdKick;
+    if (days == null) { cdMain = '—'; cdKick = T('set trip dates', 'Reisedaten setzen'); }
+    else if (days > 0) { cdMain = days; cdKick = T('days to departure', 'Tage bis Abreise'); }
+    else if (days === 0) { cdMain = T('Today', 'Heute'); cdKick = T('departure day', 'Abreisetag'); }
+    else if (trip.days_until_end != null && trip.days_until_end >= 0) { cdMain = T('In Japan', 'In Japan'); cdKick = trip.days_until_end + ' ' + T('days left', 'Tage übrig'); }
+    else { cdMain = 'お帰り'; cdKick = T('trip complete', 'Reise beendet'); }
+    var done = d.chk.done || 0, total = d.chk.total || 0, pct = total ? Math.round(done / total * 100) : 0;
+    var sym = d.bud.currency_symbol || '', rem = d.bud.remaining_yen, remHome = d.bud.remaining_home;
+    var w = d.saf.weather, cur = (w && w.current) || {};
+    var vis = (d.col.visited || []).length, prefTot = (d.col.prefectures || []).length || 47;
+    var foodTotal = 0; Object.keys(d.col.food || {}).forEach(function (k) { foodTotal += d.col.food[k] || 0; });
+    var legs = d.tr.legs || [], sel = d.tr.selected || {}, passes = d.tr.jr_pass || [], tFare = 0, tTrips = 0;
+    legs.forEach(function (l) { var q = sel[l.key] || 0; tFare += q * l.yen; tTrips += q; });
+    var jrTxt;
+    if (!tTrips) jrTxt = T('add your legs to compare', 'Strecken hinzufügen zum Vergleich');
+    else { var best = null; passes.forEach(function (p) { var s = tFare - p.ordinary; if (!best || s > best.s) best = { p: p, s: s }; }); jrTxt = (best && best.s > 0) ? T('pass saves ~', 'Pass spart ~') + yen(best.s) : T('individual tickets cheaper', 'Einzeltickets günstiger'); }
+    var nextR = (d.resv.items || [])[0];
+    var quakes = d.saf.quakes || [];
+    var q0 = quakes.filter(function (x) { return x.mag != null; })[0] || quakes[0];
+    var pod = d.nih.phrase_of_day;
+    var newsItems = (d.news.items || []).slice(0, 5);
+
+    function wt(cls, go, inner) { return '<div class="wt link ' + cls + '" data-go="' + go + '" role="button" tabindex="0">' + inner + '</div>'; }
+    function head(icon, lbl, rt) { return '<div class="wth">' + svg(icon) + '<span class="lbl">' + lbl + '</span>' + (rt ? '<span class="rt">' + rt + '</span>' : '') + '</div>'; }
+    // mini prefecture grid (47 cells)
+    var visSet = {}; (d.col.visited || []).forEach(function (c) { visSet[c] = true; });
+    var prefMini = '<div class="wpref">' + (d.col.prefectures || []).slice(0, 47).map(function (p) { return '<i class="' + (visSet[p.code] ? 'on' : '') + '"></i>'; }).join('') + '</div>';
+
+    var tiles = [
+      wt('w2 accentbg', 'countdown', head('countdown', T('Countdown', 'Countdown')) + '<div class="wbig">' + esc(String(cdMain)) + (typeof cdMain === 'number' ? '<small> ' + T('days', 'Tage') + '</small>' : '') + '</div><div class="wkick">' + esc(cdKick) + '</div><div class="wmeta">' + (trip.start ? esc(trip.start) + (trip.end ? ' → ' + esc(trip.end) : '') : T('shared with all members', 'geteilt mit allen')) + '</div>'),
+      wt('w2', 'countdown', head('check', T('Prep & packing', 'Vorbereitung')) + '<div class="wbig" style="font-size:30px">' + done + ' <small>/ ' + total + '</small></div><div class="wbar"><span style="width:' + pct + '%"></span></div><div class="wmeta">' + pct + '% ' + T('done', 'erledigt') + '</div>'),
+      wt('w2', 'budget', head('yen', T('Budget', 'Budget'), (d.bud.rate ? '¥1k≈' + sym + ' ' + (d.bud.rate * 1000).toFixed(1) : '')) + '<div class="wbig" style="font-size:28px' + (rem != null && rem < 0 ? ';color:var(--danger)' : '') + '">' + yen(rem) + '</div><div class="wkick">' + T('remaining', 'übrig') + '</div><div class="wmeta">' + (remHome != null ? '≈ ' + sym + ' ' + Math.round(remHome).toLocaleString('en-US') : T('tap to set budget', 'antippen zum Setzen')) + '</div>'),
+      wt('w2', 'safety', head('sun', T('Weather', 'Wetter')) + (w ? '<div class="wbig" style="font-size:34px">' + (cur.temp != null ? Math.round(cur.temp) + '°' : '—') + '</div><div class="wkick">' + esc(wcode(cur.code)) + '</div><div class="wmeta">' + (cur.humidity != null ? cur.humidity + '% · ' : '') + (cur.wind != null ? cur.wind + ' km/h' : '') + '</div>' : '<div class="wmeta" style="margin-top:0">' + T('Set a weather location in Settings.', 'Wetterort in den Einstellungen setzen.') + '</div>')),
+      wt('w2', 'passport', head('grid', T('Passport', 'Passport'), vis + ' / ' + prefTot) + '<div class="wbig" style="font-size:30px">' + vis + '<small> / ' + prefTot + '</small></div>' + prefMini),
+      wt('w2', 'food', head('food', T('Food tally', 'Food-Zähler')) + '<div class="wbig" style="font-size:34px">' + foodTotal + '</div><div class="wkick">' + T('items logged', 'Einträge') + '</div><div class="wmeta">' + T('konbini · ramen · kaiten …', 'Konbini · Ramen · Kaiten …') + '</div>'),
+      wt('w2', 'ic', head('card', T('IC card', 'IC-Karte'), d.ic.card || '') + '<div class="wbig" style="font-size:30px' + (d.ic.low ? ';color:var(--warning)' : '') + '">' + yen(d.ic.yen != null ? d.ic.yen : 0) + '</div><div class="wkick">' + T('balance', 'Guthaben') + '</div>' + (d.ic.low ? '<div class="wmeta">' + T('below your threshold', 'unter deinem Limit') + '</div>' : '')),
+      wt('w2', 'transport', head('train', T('JR Pass', 'JR Pass')) + '<div style="font-size:14px;font-weight:600;margin-bottom:4px">' + esc(jrTxt) + '</div><div class="wmeta">' + (tTrips ? tTrips + ' ' + T('legs · ', 'Strecken · ') + yen(tFare) : T('open to plan legs', 'öffnen zum Planen')) + '</div>'),
+      wt('w2', 'transport', head('plane', T('Next up', 'Als Nächstes')) + (nextR ? '<div class="row" style="gap:6px;margin-bottom:2px"><span class="rt-tag">' + esc(nextR.type || 'resv') + '</span></div><div style="font-size:13.5px;font-weight:600">' + esc(nextR.title || T('Reservation', 'Reservierung')) + '</div><div class="wmeta">' + esc([nextR.from, nextR.to].filter(Boolean).join(' → ') || nextR.location || '') + '</div>' : '<div class="wmeta" style="margin-top:0">' + T('No bookings yet.', 'Noch keine Buchungen.') + '</div>')),
+      wt('w2', 'countdown', head('star', T('Pinned tip', 'Angeheftet')) + (d.meta.pinned_tips ? '<div style="font-size:13.5px">' + esc(d.meta.pinned_tips) + '</div><div class="wmeta">' + (d.meta.pinned_by ? T('by ', 'von ') + esc(d.meta.pinned_by) : '') + '</div>' : '<div class="wmeta" style="margin-top:0">' + T('No pinned note yet.', 'Noch keine Notiz.') + '</div>')),
+      wt('w2', 'safety', head('wave', T('Recent quake', 'Letztes Beben')) + (q0 ? '<div class="wbig" style="font-size:26px">M ' + (q0.mag != null ? q0.mag : '—') + '</div><div class="wkick">' + esc(q0.place || '') + '</div><div class="wmeta">' + esc((q0.time || '').replace('T', ' ').slice(0, 16)) + '</div>' : '<div class="wmeta" style="margin-top:0">' + T('No recent quakes.', 'Keine aktuellen Beben.') + '</div>')),
+      wt('w2 h2 scroll', 'safety', head('globe', T('Latest news', 'Aktuelle News'), 'EN') + (newsItems.length ? newsItems.map(function (n) { return '<div class="wli">' + esc(n.title) + '</div>'; }).join('') : '<div class="wmeta" style="margin-top:0">' + T('News feed loads on the Safety tab.', 'News-Feed lädt im Safety-Tab.') + '</div>')),
+      wt('w2', 'spots', head('pin', T('Must-see spots', 'Sehenswürdigkeiten')) + '<div class="wbig" style="font-size:30px">' + ((d.sp.spots || []).length) + '</div><div class="wkick">' + T('curated · tap to browse', 'kuratiert · antippen') + '</div>'),
+      wt('w2', 'nihongo', head('book', T('Phrase of the day', 'Phrase des Tages')) + (pod ? '<div class="wjp">' + esc(pod.jp) + '</div><div class="wmeta" style="margin-top:4px">' + esc(pod.romaji) + ' · ' + esc(T(pod.en, pod.de)) + '</div>' + (SAY ? '<div style="margin-top:6px"><button class="iconbtn" data-say="' + esc(pod.jp) + '" title="' + T('Play (ja)', 'Anhören') + '">' + svg('speaker') + '</button></div>' : '') : ''))
+    ];
+    panel.innerHTML = '<div class="bento">' + tiles.join('') + '</div>';
+    panel.querySelectorAll('.wt[data-go]').forEach(function (el) {
+      var go = el.getAttribute('data-go');
+      el.onclick = function () { openTab(go); };
+      el.onkeydown = function (e) { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openTab(go); } };
+    });
+    panel.querySelectorAll('[data-say]').forEach(function (el) {
+      el.onclick = function (e) { e.stopPropagation(); speak(el.getAttribute('data-say')); };
+    });
+  }
 
   // ---- 1. Countdown & checklist -----------------------------------------
   SECTIONS.countdown = function (panel) {
