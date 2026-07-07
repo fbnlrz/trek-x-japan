@@ -192,6 +192,32 @@
   .pinnote .pk { font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); }
   .pinnote .pv { font-size: 14px; color: var(--text); white-space: pre-wrap; word-break: break-word; margin-top: 2px; }
   .pinnote .pb { font-size: 11px; color: var(--text-faint); margin-top: 3px; }
+  /* Motion: content rises/fades in as a tab renders. Honours reduced motion. */
+  @keyframes tj-rise { from { opacity: 0; transform: translateY(7px); } to { opacity: 1; transform: none; } }
+  .stagger > * { animation: tj-rise .34s ease both; }
+  .stagger > *:nth-child(2) { animation-delay: .04s; }
+  .stagger > *:nth-child(3) { animation-delay: .08s; }
+  .stagger > *:nth-child(4) { animation-delay: .12s; }
+  .stagger > *:nth-child(5) { animation-delay: .16s; }
+  .stagger > *:nth-child(n+6) { animation-delay: .19s; }
+  @media (prefers-reduced-motion: reduce) { .stagger > * { animation: none; } }
+  :root[data-reduce-motion] .stagger > * { animation: none; }
+  /* Clickable affordance for external links (maps, sources). */
+  .lnk { cursor: pointer; }
+  .lnk:hover { color: var(--accent); }
+  /* Compact icon button (speaker, external). */
+  .iconbtn { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
+    border-radius: 8px; border: 1px solid var(--border-faint); background: transparent; color: var(--text-muted);
+    cursor: pointer; flex: none; padding: 0; }
+  .iconbtn:hover { color: var(--accent); border-color: color-mix(in srgb, var(--accent) 40%, var(--border-faint)); }
+  .iconbtn svg { width: 14px; height: 14px; }
+  /* Reservation row (native TREK bookings). */
+  .resv { display: flex; align-items: flex-start; gap: 10px; padding: 9px 4px; border-top: 1px solid var(--border-faint); }
+  .resv:first-child { border-top: 0; }
+  .resv .rt { font-size: 10px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint);
+    border: 1px solid var(--border-faint); border-radius: 6px; padding: 2px 7px; flex: none; margin-top: 1px; min-width: 54px; text-align: center; }
+  .resv .rd { font-size: 11px; color: var(--text-faint); margin-top: 2px; }
+  .resv svg { width: 16px; height: 16px; flex: none; color: var(--text-muted); }
   .banner { padding: 10px 12px; border-radius: var(--radius-md); font-size: 12.5px; }
   .banner.warn { background: rgba(180,83,9,.12); color: var(--warning); border: 1px solid rgba(180,83,9,.3); }
   .banner.ok { background: rgba(22,163,74,.12); color: var(--success); border: 1px solid rgba(22,163,74,.3); }
@@ -233,10 +259,29 @@
   }
   function notify(level, message) { post({ type: 'trek:notify', level: level, message: message }); }
   function navigate(to) { post({ type: 'trek:navigate', to: to }); }
+  // Open a URL in the host (TREK >=3.2.2). Fire-and-forget; no-ops on older hosts.
+  function openExternal(url) { if (url) post({ type: 'trek:openExternal', url: String(url) }); }
+  function openMaps(q) { if (q) openExternal('https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(q)); }
+  // Speak Japanese via the browser's speech engine (works inside the sandbox,
+  // no network/egress). Degrades silently where no ja voice is present.
+  function canSpeak() { return typeof window.speechSynthesis !== 'undefined' && typeof window.SpeechSynthesisUtterance !== 'undefined'; }
+  function speak(text) {
+    if (!canSpeak() || !text) return;
+    try { window.speechSynthesis.cancel(); var u = new SpeechSynthesisUtterance(String(text)); u.lang = 'ja-JP'; u.rate = 0.88; window.speechSynthesis.speak(u); } catch (_) {}
+  }
+  // Live collaboration: the host (>=3.2.2) pushes core changes as trek:event.
+  // Debounce-refresh the open tab so members see each other's edits without a
+  // manual reload. Harmless where the host never sends the message.
+  var _liveTimer = null;
+  function scheduleLiveRefresh() {
+    if (_liveTimer) return;
+    _liveTimer = setTimeout(function () { _liveTimer = null; if (current && !document.hidden) openTab(current, true); }, 900);
+  }
 
   window.addEventListener('message', function (e) {
     var m = e.data; if (!m || !m.type) return;
     if (m.type === 'trek:context') { applyContext(m); return; }
+    if (m.type === 'trek:event') { scheduleLiveRefresh(); return; }
     if (m.type === 'trek:response' && pending[m.requestId]) {
       pending[m.requestId].resolve(m.data); delete pending[m.requestId]; return;
     }
@@ -266,6 +311,9 @@
     var theme = resolveTheme(m);
     ctx.theme = theme;
     document.documentElement.dataset.theme = theme;
+    var app = m.appearance || {};
+    if (app.reducedMotion) document.documentElement.setAttribute('data-reduce-motion', '1');
+    else document.documentElement.removeAttribute('data-reduce-motion');
     applyTokens(m.tokens);
     if (!booted) { booted = true; boot(); }
     else { renderHeader(); if (current) openTab(current, true); }
@@ -309,6 +357,13 @@
     settings: '<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.3 1a7 7 0 0 0-1.7-1L14.5 2h-5l-.4 2.6a7 7 0 0 0-1.7 1l-2.3-1-2 3.4 2 1.5a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 1.7 1L9.5 22h5l.4-2.6a7 7 0 0 0 1.7-1l2.3 1 2-3.4-2-1.5a7 7 0 0 0 .1-1z"/>',
     check: '<polyline points="20 6 9 17 4 12"/>',
     star: '<polygon points="12 2 15 9 22 9.3 16.5 14 18.5 21 12 17 5.5 21 7.5 14 2 9.3 9 9"/>',
+    plane: '<path d="M10 3l1.5 7L4 14v2l7-1.5V19l-2 1.5V22l3-1 3 1v-1.5L16 19v-4.5L23 16v-2l-7.5-4L17 3l-2 .5-2 4.5-2-4.5z"/>',
+    train: '<rect x="6" y="3" width="12" height="13" rx="2"/><path d="M6 10h12"/><circle cx="9" cy="13" r="1"/><circle cx="15" cy="13" r="1"/><path d="M7 20l-2 2M17 20l2 2"/>',
+    bed: '<path d="M3 8v11M3 13h18v6M21 19v-4a3 3 0 0 0-3-3H10v4"/><circle cx="7" cy="12" r="1.5"/>',
+    ticket: '<path d="M3 8a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2 2 2 0 0 0 0 4 2 2 0 0 1-2 2H5a2 2 0 0 1-2-2 2 2 0 0 0 0-4z"/><path d="M14 6v12"/>',
+    speaker: '<path d="M4 9v6h4l5 4V5L8 9z"/><path d="M17 8a5 5 0 0 1 0 8"/>',
+    external: '<path d="M14 4h6v6"/><path d="M20 4l-9 9"/><path d="M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>',
+    pin: '<path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11z"/><circle cx="12" cy="10" r="2.5"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
@@ -460,6 +515,7 @@
     var btns = document.getElementById('tabs').querySelectorAll('.tab');
     btns.forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === id ? 'true' : 'false'); });
     var panel = document.getElementById('panel');
+    panel.className = force ? '' : 'stagger';
     if (!force) { var sc = document.getElementById('scroller'); if (sc) sc.scrollTop = 0; }
     panel.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Loading…', 'Lädt…') + '</div>';
     reportHeight();
@@ -545,16 +601,18 @@
   };
 
   // TREK-native integrations for the countdown tab: pinned tips (ctx.meta),
-  // packing (db:read:packing), files (db:read:files), activity (events feed).
+  // packing (db:read:packing), files (db:read:files), activity (events feed),
+  // reservations (ctx.trips.getReservations — flights/trains/stays).
   function loadTrekExtra(panel) {
     var box = panel.querySelector('#trek-extra'); if (!box) return;
     Promise.all([
       invoke('/meta', 'GET').catch(function () { return {}; }),
       invoke('/trip/packing', 'GET').catch(function () { return { available: false, items: [] }; }),
       invoke('/trip/files', 'GET').catch(function () { return { available: false, files: [] }; }),
-      invoke('/activity', 'GET').catch(function () { return { recent: [], counts: [] }; })
+      invoke('/activity', 'GET').catch(function () { return { recent: [], counts: [] }; }),
+      invoke('/reservations', 'GET').catch(function () { return { available: false, items: [] }; })
     ]).then(function (r) {
-      var meta = r[0] || {}, pack = r[1] || {}, files = r[2] || {}, act = r[3] || {};
+      var meta = r[0] || {}, pack = r[1] || {}, files = r[2] || {}, act = r[3] || {}, resv = r[4] || {};
       var pinVal = meta.pinned_tips || '';
       var pinBy = meta.pinned_by || '';
       // The shared pin renders as a prominent note at the very top of the hub so
@@ -586,6 +644,21 @@
           (act.recent || []).slice(0, 10).map(function (a) { return '<div class="listrow"><span style="flex:1">' + esc(a.event) + '</span><span class="faint">' + ago(a.at) + '</span></div>'; }).join('')
         : na(T('Live feed of trip changes (places, days, files…) appears here.', 'Live-Feed der Reise-Änderungen (Orte, Tage, Dateien…) erscheint hier.'));
 
+      function resvIcon(t) { if (/flight|plane|air/.test(t)) return 'plane'; if (/train|rail|shinkansen|jr/.test(t)) return 'train'; if (/hotel|stay|lodg|ryokan|accom|room/.test(t)) return 'bed'; return 'ticket'; }
+      function resvWhen(x) { var s = x.start ? mmdd((String(x.start).slice(5,10))) : ''; var tm = /T(\d{2}:\d{2})/.exec(x.start || ''); if (tm) s += ' ' + tm[1]; if (x.end && String(x.end).slice(0,10) !== String(x.start).slice(0,10)) s += ' → ' + mmdd(String(x.end).slice(5,10)); return s; }
+      var resvRows = (resv.items || []).slice(0, 12).map(function (x) {
+        var route = [x.from, x.to].filter(Boolean).join(' → ') || x.location || '';
+        var q = x.location || x.to || x.title || '';
+        var meta2 = [resvWhen(x), route, x.ref ? ('#' + x.ref) : ''].filter(Boolean).join(' · ');
+        return '<div class="resv"><span class="rt">' + esc(x.type || 'resv') + '</span>' +
+          '<span style="flex:1;min-width:0"><span class="row" style="gap:6px">' + svg(resvIcon(x.type || '')) +
+          '<span class="lnk" data-maps="' + esc(q) + '" style="flex:1">' + esc(x.title || T('Reservation', 'Reservierung')) + '</span></span>' +
+          (meta2 ? '<div class="rd">' + esc(meta2) + '</div>' : '') + '</span></div>';
+      }).join('');
+      var resvHtml = resv.available
+        ? ((resv.items || []).length ? resvRows : na(T('No flights, trains or stays booked in this trip yet.', 'Noch keine Flüge, Züge oder Unterkünfte in dieser Reise.')))
+        : na(T('Native reservations — available in a TREK trip with bookings.', 'Native Buchungen — in einer TREK-Reise mit Reservierungen verfügbar.'));
+
       box.innerHTML =
         '<div class="card"><h2>' + svg('star') + T('Pinned tips (shared)', 'Angeheftete Tipps (geteilt)') + '</h2>' +
           '<div class="muted" style="font-size:12px;margin:-4px 0 8px">' + T('Shared with everyone on this trip — it shows at the top of the hub for all members.', 'Für alle in dieser Reise sichtbar — erscheint oben im Hub für jedes Mitglied.') + '</div>' +
@@ -593,9 +666,16 @@
           '<div class="row" style="margin-top:8px"><button class="btn" id="pin-save">' + T('Save pin', 'Pin speichern') + '</button>' +
           '<button class="btn sec sm" id="pin-clear">' + T('Clear', 'Löschen') + '</button></div>' +
         '</div>' +
+        '<div class="card"><h2>' + svg('plane') + T('Transport & stays (from TREK)', 'Transport & Übernachtung (aus TREK)') + '</h2>' + resvHtml + '</div>' +
         '<div class="card"><h2>' + svg('countdown') + T('Live trip activity', 'Live-Reise-Aktivität') + '</h2>' + actHtml + '</div>' +
         '<div class="card"><h2>' + svg('check') + T('Trip packing (from TREK)', 'Reise-Packliste (aus TREK)') + '</h2>' + packHtml + '</div>' +
         '<div class="card"><h2>' + svg('book') + T('Trip files (from TREK)', 'Reise-Dateien (aus TREK)') + '</h2>' + filesHtml + '</div>';
+
+      box.querySelectorAll('.lnk[data-maps]').forEach(function (el) {
+        var q = el.getAttribute('data-maps'); if (!q) return;
+        el.title = T('Open in Maps', 'In Karten öffnen');
+        el.onclick = function () { openMaps(q); };
+      });
 
       box.querySelector('#pin-save').onclick = function () {
         var v = box.querySelector('#pin-text').value;
@@ -618,6 +698,8 @@
   };
   function renderNihongo(panel, d) {
     var favSet = {}; d.favorites.forEach(function (f) { favSet[f] = true; });
+    var SAY = canSpeak();
+    function sayBtn(jp) { return SAY ? '<button class="iconbtn" data-say="' + esc(jp) + '" title="' + T('Play (ja)', 'Anhören (ja)') + '">' + svg('speaker') + '</button>' : ''; }
     var pod = d.phrase_of_day;
     var cats = ['all'].concat(d.categories);
     var catChips = cats.map(function (c) {
@@ -636,7 +718,8 @@
           '<span style="color:' + (favSet[p.id] ? 'var(--warning)' : 'var(--text-faint)') + '">' + svg('star') + '</span></span>' +
         '<div style="flex:1"><div><b>' + esc(p.jp) + '</b> <span class="jp">' + esc(p.romaji) + '</span></div>' +
         '<div class="muted" style="font-size:12.5px">' + esc(T(p.en, p.de)) + '</div>' +
-        '<div class="faint" style="font-size:11px">' + esc(p.kana) + ' · ' + esc(p.category) + '</div></div></div>';
+        '<div class="faint" style="font-size:11px">' + esc(p.kana) + ' · ' + esc(p.category) + '</div></div>' +
+        sayBtn(p.jp) + '</div>';
     }).join('') || '<div class="loading">' + T('No phrases match.', 'Keine Phrasen gefunden.') + '</div>';
 
     panel.innerHTML =
@@ -645,7 +728,7 @@
           '<div style="font-size:24px;font-weight:650">' + esc(pod.jp) + '</div>' +
           '<div class="jp" style="font-size:14px;margin-top:2px">' + esc(pod.romaji) + ' · ' + esc(pod.kana) + '</div>' +
           '<div style="margin-top:8px">' + esc(T(pod.en, pod.de)) + '</div>' +
-          '<div class="row" style="margin-top:14px"><button class="btn sec sm" id="pod-next">' + svg('refresh') + ' ' + T('Next', 'Nächste') + '</button>' +
+          '<div class="row" style="margin-top:14px">' + sayBtn(pod.jp) + '<button class="btn sec sm" id="pod-next">' + svg('refresh') + ' ' + T('Next', 'Nächste') + '</button>' +
           '<button class="btn sm" id="pod-fav" data-fav="' + esc(pod.id) + '">' + (favSet[pod.id] ? T('Saved', 'Gespeichert') : T('Save', 'Merken')) + '</button></div>' +
         '</div>' +
         '<div class="card"><h2>' + svg('search') + T('Phrasebook', 'Phrasenbuch') + '</h2>' +
@@ -664,6 +747,7 @@
       b.onclick = function () { nihongoState.cat = b.getAttribute('data-cat'); renderNihongo(panel, d); reportHeight(); };
     });
     panel.querySelector('#favonly').onclick = function () { nihongoState.favOnly = !nihongoState.favOnly; renderNihongo(panel, d); reportHeight(); };
+    panel.querySelectorAll('[data-say]').forEach(function (el) { el.onclick = function () { speak(el.getAttribute('data-say')); }; });
     panel.querySelectorAll('[data-fav]').forEach(function (b) {
       if (b.id === 'pod-fav') return;
       b.onclick = function () { toggleFav(b.getAttribute('data-fav'), d, panel); };

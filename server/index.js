@@ -140,6 +140,25 @@ async function resolveNames(ctx, ids) {
 }
 function coords(tp) { const lat = toNum(tp.weather_lat, null), lon = toNum(tp.weather_lon, null); return (lat != null && lon != null) ? { lat, lon } : null; }
 
+// TREK's Reservation shape is loose ({ id, type, [k]: unknown }); read the
+// common fields defensively so flights/trains/stays render whatever the host has.
+function pick(o, keys) { for (const k of keys) { if (o[k] != null && o[k] !== '') return o[k]; } return null; }
+function normReservation(x) {
+  if (!x || typeof x !== 'object') return null;
+  const type = String(pick(x, ['type', 'kind', 'category']) || 'reservation').toLowerCase();
+  return {
+    id: x.id,
+    type,
+    title: pick(x, ['title', 'name', 'label', 'description', 'summary', 'provider', 'carrier', 'hotel']),
+    start: pick(x, ['start', 'start_date', 'startDate', 'date', 'depart', 'departure', 'check_in', 'checkIn', 'from_date']),
+    end: pick(x, ['end', 'end_date', 'endDate', 'until', 'arrive', 'arrival', 'check_out', 'checkOut', 'to_date']),
+    from: pick(x, ['from', 'origin', 'from_location', 'departure_place', 'pickup']),
+    to: pick(x, ['to', 'destination', 'to_location', 'arrival_place', 'dropoff']),
+    location: pick(x, ['location', 'place', 'address', 'city']),
+    ref: pick(x, ['confirmation', 'reference', 'ref', 'booking_ref', 'pnr', 'code']),
+  };
+}
+
 // remote refreshers
 async function timedFetch(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('http ' + res.status); return res.json(); }
 async function refreshFx(ctx) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); const rates = (raw && raw.rates) || {}; const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) }; return { data, fetched_at: await cacheSet(ctx, 'fx', data) }; }
@@ -291,6 +310,18 @@ const PLUGIN = {
             if (overlapsSeason(s, e, '04-29', '05-06')) out.push({ level: 'info', message: 'TREK × Japan: your dates hit Golden Week — book transport & lodging early, expect crowds.' });
             if (overlapsSeason(s, e, '12-28', '01-04')) out.push({ level: 'info', message: 'TREK × Japan: New Year (o-shogatsu) — many shops and sights close; plan around it.' });
             if (overlapsSeason(s, e, '08-10', '08-17')) out.push({ level: 'info', message: 'TREK × Japan: Obon week — domestic travel peaks and prices rise.' });
+            // Prep checklist behind with departure imminent.
+            const dStart = daysUntil(s), dEnd = daysUntil(e);
+            if (dStart != null && dStart >= 0 && dStart <= 7) {
+              const cl = await ctx.db.query('SELECT COALESCE(SUM(done),0) AS d FROM checklist WHERE trip_id = ?', id);
+              const done = cl.length ? cl[0].d : 0, total = CHECKLIST_ITEMS.length;
+              if (total > 0 && done < Math.ceil(total * 0.6)) out.push({ level: 'warning', message: 'TREK × Japan: departure in ' + dStart + ' day' + (dStart === 1 ? '' : 's') + ', prep checklist only ' + done + '/' + total + ' done.' });
+            }
+            // In-Japan nudge to start the shared prefecture passport.
+            if (dStart != null && dEnd != null && dStart <= 0 && dEnd >= 0) {
+              const vp = await ctx.db.query('SELECT COUNT(*) AS n FROM visited_prefs WHERE trip_id = ?', id);
+              if ((vp.length ? vp[0].n : 0) === 0) out.push({ level: 'info', message: 'TREK × Japan: you are in Japan — start stamping the prefecture passport together.' });
+            }
           }
         } catch (e) { ctx.log.warn('warnings', { msg: String(e && e.message) }); }
         return out;
@@ -729,6 +760,15 @@ const PLUGIN = {
       await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
       await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
       return json(200, { pinned_tips: text });
+    } },
+    // Native TREK reservations (flights / trains / stays from Transports & Book).
+    { method: 'GET', path: '/reservations', auth: true, async handler(req, ctx) {
+      const { tripId, userId } = await requireTrip(req, ctx);
+      const r = await attempt(() => ctx.trips.getReservations(tripId, userId));
+      if (!r.ok) return json(200, { available: false, items: [] });
+      const items = (Array.isArray(r.value) ? r.value : []).map(normReservation).filter(Boolean);
+      items.sort(function (a, b) { return String(a.start || '~').localeCompare(String(b.start || '~')); });
+      return json(200, { available: true, items });
     } },
   ],
 };

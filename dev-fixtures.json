@@ -8,7 +8,12 @@
         "title": "Japan 2026",
         "start_date": "2026-08-01",
         "end_date": "2026-08-14"
-      }
+      },
+      "reservations": [
+        { "id": 1, "type": "flight", "title": "FRA → NRT (LH716)", "start": "2026-08-01T13:30:00", "from": "Frankfurt", "to": "Tokyo Narita", "ref": "ABC123" },
+        { "id": 2, "type": "hotel", "title": "Ryokan Yoshida-sanso", "start": "2026-08-03", "end": "2026-08-05", "location": "Kyoto" },
+        { "id": 3, "type": "train", "title": "Shinkansen Nozomi 21", "start": "2026-08-03T09:03:00", "from": "Tokyo", "to": "Kyoto" }
+      ]
     }
   },
   "users": {
