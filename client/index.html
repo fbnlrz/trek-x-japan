@@ -113,6 +113,58 @@
   @media (min-width: 680px) { .masonry { column-count: 2; } }
   @media (min-width: 1120px) { .masonry { column-count: 3; } }
   @media (min-width: 1640px) { .masonry { column-count: 4; } }
+
+  /* ===== Single-page bento ===== */
+  .cat { display: flex; align-items: baseline; gap: 12px; margin: 26px 2px 12px; flex-wrap: wrap; }
+  .cat:first-child { margin-top: 6px; }
+  .cat .eyebrow { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .14em; color: var(--accent); }
+  .cat .cdesc { font-size: 12.5px; color: var(--text-faint); }
+  .bento { display: grid; gap: 14px; grid-template-columns: repeat(2, 1fr); grid-auto-rows: 172px; grid-auto-flow: row dense; }
+  @media (min-width: 720px)  { .bento { grid-template-columns: repeat(4, 1fr); } }
+  @media (min-width: 1180px) { .bento { grid-template-columns: repeat(6, 1fr); } }
+  .bento .w2 { grid-column: span 2; } .bento .w3 { grid-column: span 3; } .bento .w4 { grid-column: span 4; }
+  .bento .h2 { grid-row: span 2; } .bento .h3 { grid-row: span 3; }
+  @media (max-width: 719px) { .bento .w3, .bento .w4 { grid-column: span 2; } }
+  .tile { background: var(--bg-card); border: 1px solid var(--border-faint); border-radius: var(--radius-lg);
+    padding: 15px 16px; box-shadow: var(--shadow-card); overflow: hidden; position: relative;
+    display: flex; flex-direction: column; min-width: 0; }
+  .tile.scroll { overflow-y: auto; }
+  .tile.accentbg { background: linear-gradient(155deg, color-mix(in srgb, var(--accent) 12%, var(--bg-card)), var(--bg-card) 72%); }
+  .th { display: flex; align-items: center; gap: 8px; color: var(--text-muted); margin-bottom: 10px; flex: none; }
+  .th svg { width: 15px; height: 15px; color: var(--accent); }
+  .th .lbl { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .08em; }
+  .th .rt { margin-left: auto; font-size: 11px; color: var(--text-faint); font-weight: 600; }
+  .tbig { font-size: 46px; font-weight: 760; letter-spacing: -.03em; line-height: 1; font-variant-numeric: tabular-nums; }
+  .tbig small { font-size: 15px; font-weight: 600; color: var(--text-muted); letter-spacing: 0; }
+  .tkick { font-size: 11px; text-transform: uppercase; letter-spacing: .1em; color: var(--text-faint); margin-top: 6px; }
+  .tmeta { font-size: 12px; color: var(--text-muted); margin-top: auto; padding-top: 8px; }
+  .tile .pref-grid { margin-top: 4px; }
+  .trip3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+  .jpbig { font-size: 20px; font-weight: 650; letter-spacing: .01em; }
+  .rt-tag { font-size: 9.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--text-faint);
+    border: 1px solid var(--border-faint); border-radius: 6px; padding: 2px 6px; min-width: 46px; text-align: center; flex: none; }
+  .tile ol.steps { margin: 0; padding-left: 17px; font-size: 12.5px; line-height: 1.65; color: var(--text-muted); }
+  .tile ol.steps b, .tile ol.steps { }
+  .tile .scroll::-webkit-scrollbar, .tile.scroll::-webkit-scrollbar { width: 7px; }
+  .tile.scroll::-webkit-scrollbar-thumb { background: var(--border-faint); border-radius: 99px; }
+  /* Categories pack their feature blocks into masonry columns (dense, no big
+     empty gaps). The Overview block is 'solo' — it already runs its own masonry. */
+  .catwrap { column-gap: 14px; column-count: 1; }
+  @media (min-width: 760px)  { .catwrap { column-count: 2; } }
+  @media (min-width: 1240px) { .catwrap { column-count: 3; } }
+  .catwrap > .secblock { break-inside: avoid; -webkit-column-break-inside: avoid; margin: 0 0 14px; display: block; }
+  /* inside a masonry column, feature cards stack full-width (no side-by-side) */
+  .catwrap:not(.solo) .secblock .grid { display: block; }
+  .catwrap:not(.solo) .secblock .grid > .card { margin-bottom: 14px; }
+  .catwrap:not(.solo) .secblock .grid > .card:last-child { margin-bottom: 0; }
+  .catwrap.solo { column-count: 1; }
+  .secblock { min-width: 0; }
+  #page { padding-bottom: 10px; }
+  /* Keep bento tiles compact: very tall cards (long checklists / lists) scroll
+     inside instead of dominating a whole masonry column. */
+  #page .card { max-height: 560px; overflow-y: auto; }
+  #page .card::-webkit-scrollbar { width: 7px; }
+  #page .card::-webkit-scrollbar-thumb { background: var(--border-faint); border-radius: 99px; }
   .grid.cols3 { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
   .card { background: var(--bg-card); border: 1px solid var(--border-faint);
     border-radius: var(--radius-lg); box-shadow: var(--shadow-card); padding: 16px 16px; }
@@ -292,7 +344,7 @@
   var _liveTimer = null;
   function scheduleLiveRefresh() {
     if (_liveTimer) return;
-    _liveTimer = setTimeout(function () { _liveTimer = null; if (current && !document.hidden) openTab(current, true); }, 900);
+    _liveTimer = setTimeout(function () { _liveTimer = null; if (!document.hidden) renderPage(); }, 900);
   }
 
   window.addEventListener('message', function (e) {
@@ -333,7 +385,7 @@
     else document.documentElement.removeAttribute('data-reduce-motion');
     applyTokens(m.tokens);
     if (!booted) { booted = true; boot(); }
-    else { renderHeader(); if (current) openTab(current, true); }
+    else { renderHeader(); renderPage(); }
   }
   // (≥3.2.1) live token contract: TREK sends the current theme's palette in
   // `m.tokens`. Mirror any matching custom properties onto :root so our colours
@@ -451,7 +503,7 @@
   function availH() { if (!AVAIL_H) AVAIL_H = Math.max(window.innerHeight || 700, 420); return AVAIL_H; }
   function reportHeight() {
     var appbar = document.querySelector('.appbar');
-    var panel = document.getElementById('panel');
+    var panel = document.getElementById('page');
     var appH = appbar ? appbar.offsetHeight : 0;
     var panelH = panel ? panel.getBoundingClientRect().height : 0;
     var content = Math.ceil(appH + panelH) + 36;
@@ -462,7 +514,7 @@
   // Observe the content panel (its size changes as sections render).
   var _panelObserver = null;
   if (window.ResizeObserver) { try { _panelObserver = new ResizeObserver(reportHeight); } catch (_) {} }
-  function armPanelObserver() { var pn = document.getElementById('panel'); if (_panelObserver && pn) { try { _panelObserver.disconnect(); _panelObserver.observe(pn); } catch (_) {} } }
+  function armPanelObserver() { var pn = document.getElementById('page'); if (_panelObserver && pn) { try { _panelObserver.disconnect(); _panelObserver.observe(pn); } catch (_) {} } }
 
   var TABS = [
     // Prep — before you fly
@@ -497,13 +549,44 @@
       return;
     }
     root.innerHTML =
-      '<div class="appbar"><div class="wrapmax"><div id="hdr"></div><div class="tabs" id="tabs" role="tablist"></div></div></div>' +
-      '<div id="scroller"><div class="wrapmax"><div id="panel"></div></div></div>';
-    renderHeader(); renderTabs();
+      '<div class="appbar"><div class="wrapmax"><div id="hdr"></div></div></div>' +
+      '<div id="scroller"><div class="wrapmax"><div id="page"></div></div></div>';
+    renderHeader();
     armPanelObserver();
-    var initial = (location.hash || '').replace('#', '');
-    openTab(TABS.some(function (t) { return t.id === initial; }) ? initial : 'countdown');
+    renderPage();
     invoke('/meta', 'GET').then(function (d) { tripInfo = d; renderHeader(); }).catch(function () {});
+  }
+
+  // Single-page bento: every feature block on one scrolling page, grouped into
+  // categories instead of tabs. Each block reuses its (tested) section renderer.
+  var CATS = [
+    { en: 'Overview', de: 'Überblick', den: 'where the trip stands right now', dde: 'wo die Reise gerade steht', ids: ['countdown'] },
+    { en: 'Plan & get around', de: 'Planen & unterwegs', den: 'what to see and how to move', dde: 'was sehen, wie fortbewegen', ids: ['spots', 'transport', 'season', 'arrival'] },
+    { en: 'On the ground', de: 'Vor Ort', den: 'money, food and collecting', dde: 'Geld, Essen und Sammeln', ids: ['budget', 'taxfree', 'ic', 'food', 'passport'] },
+    { en: 'Language & culture', de: 'Sprache & Kultur', den: 'phrases, translator and etiquette', dde: 'Phrasen, Übersetzer und Etikette', ids: ['nihongo', 'culture'] },
+    { en: 'Safety & news', de: 'Sicherheit & News', den: "weather, quakes and what's happening", dde: 'Wetter, Beben und Aktuelles', ids: ['safety'] },
+    { en: 'Settings', de: 'Einstellungen', den: '', dde: '', ids: ['settings'] }
+  ];
+  var sectionEls = {};
+  function renderPage() {
+    var page = document.getElementById('page'); if (!page) return;
+    page.className = 'stagger'; page.innerHTML = ''; sectionEls = {};
+    CATS.forEach(function (c) {
+      var head = document.createElement('div'); head.className = 'cat';
+      head.innerHTML = '<span class="eyebrow">' + esc(T(c.en, c.de)) + '</span>' +
+        ((c.den || c.dde) ? '<span class="cdesc">' + esc(T(c.den, c.dde)) + '</span>' : '');
+      page.appendChild(head);
+      var wrap = document.createElement('div'); wrap.className = 'catwrap' + (c.ids.indexOf('countdown') >= 0 ? ' solo' : ''); page.appendChild(wrap);
+      c.ids.forEach(function (id) {
+        var el = document.createElement('div'); el.className = 'secblock'; wrap.appendChild(el);
+        sectionEls[id] = el;
+        var fn = SECTIONS[id]; if (!fn) return;
+        Promise.resolve(fn(el)).then(reportHeight).catch(function (e) {
+          el.innerHTML = '<div class="card"><div class="banner warn">' + esc(e && e.message) + '</div></div>';
+        });
+      });
+    });
+    reportHeight();
   }
   function renderHeader() {
     var hdr = document.getElementById('hdr'); if (!hdr) return;
@@ -533,19 +616,12 @@
     });
   }
 
+  // Re-render a single feature block in place (used by section refresh calls).
   function openTab(id, force) {
-    current = id;
-    var btns = document.getElementById('tabs').querySelectorAll('.tab');
-    btns.forEach(function (b) { b.setAttribute('aria-selected', b.dataset.tab === id ? 'true' : 'false'); });
-    var panel = document.getElementById('panel');
-    panel.className = force ? '' : 'stagger';
-    if (!force) { var sc = document.getElementById('scroller'); if (sc) sc.scrollTop = 0; }
-    panel.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Loading…', 'Lädt…') + '</div>';
-    reportHeight();
-    var fn = SECTIONS[id];
-    Promise.resolve(fn(panel, force)).then(reportHeight).catch(function (e) {
-      panel.innerHTML = '<div class="card"><div class="banner warn">' +
-        T('Could not load this section: ', 'Abschnitt konnte nicht geladen werden: ') + esc(e && e.message) + '</div></div>';
+    var el = sectionEls[id]; var fn = SECTIONS[id];
+    if (!el || !fn) return;
+    Promise.resolve(fn(el, force)).then(reportHeight).catch(function (e) {
+      el.innerHTML = '<div class="card"><div class="banner warn">' + esc(e && e.message) + '</div></div>';
       reportHeight();
     });
   }
