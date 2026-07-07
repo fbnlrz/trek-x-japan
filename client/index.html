@@ -75,11 +75,11 @@
   #root { height: 100%; display: flex; flex-direction: column; min-height: 0; }
   .appbar { flex: none; background: var(--bg-page); border-bottom: 1px solid var(--border-faint); }
   #scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; }
-  /* Soft width guard only: keeps line lengths readable on very wide monitors
-     but does not fight the host. TREK >=2.2.2 owns the content width itself, so
-     this cap is deliberately generous (well above the host column) to avoid
-     double-constraining the layout. */
-  .wrapmax { max-width: 1400px; margin: 0 auto; padding: 0 12px; }
+  /* Full-page plugins fill their host container (per the TREK plugin contract),
+     so we do NOT cap the width here — the host owns it. Content stays readable
+     because the section grids are responsive (auto-fit), adding columns rather
+     than stretching. Only a small gutter is kept for hosts that render flush. */
+  .wrapmax { width: 100%; padding: 0 12px; }
   .appbar .wrapmax { padding-top: 18px; }
   #scroller .wrapmax { padding-top: 16px; padding-bottom: 44px; }
 
