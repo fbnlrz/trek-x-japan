@@ -231,6 +231,7 @@ const PLUGIN = {
     await ctx.db.migrate('t009_activity', 'CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, trip_id INTEGER NOT NULL, event TEXT, at TEXT)');
     await ctx.db.migrate('t010_place_notes', 'CREATE TABLE IF NOT EXISTS place_notes (place_id INTEGER PRIMARY KEY, trip_id INTEGER, note TEXT, by_user INTEGER, at TEXT)');
     await ctx.db.migrate('t011_cost_sync', 'CREATE TABLE IF NOT EXISTS cost_sync (spend_id INTEGER PRIMARY KEY, cost_id INTEGER, at TEXT)');
+    await ctx.db.migrate('t012_pinned_tips', 'CREATE TABLE IF NOT EXISTS pinned_tips (trip_id INTEGER PRIMARY KEY, text TEXT, by_user INTEGER, at TEXT)');
     // personal, per-user
     await ctx.db.migrate('u001_user_prefs', 'CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(user_id, key))');
     await ctx.db.migrate('u002_phrase_favs', 'CREATE TABLE IF NOT EXISTS phrase_favs (user_id INTEGER NOT NULL, phrase_id TEXT NOT NULL, at TEXT, PRIMARY KEY(user_id, phrase_id))');
@@ -308,12 +309,16 @@ const PLUGIN = {
       const { userId, tripId, trip } = await requireTrip(req, ctx);
       const td = tripDates(trip);
       const prefs = await loadUserPrefs(ctx, userId);
-      const pin = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips'));
+      // Source of truth is our own trip-scoped table (shared, always available);
+      // fall back to the native ctx.meta mirror only if the row is missing.
+      const pinRows = await ctx.db.query('SELECT text FROM pinned_tips WHERE trip_id = ?', tripId);
+      let pinned = pinRows.length ? pinRows[0].text : null;
+      if (pinned == null) { const m = await attempt(() => ctx.meta.get('trip', tripId, 'pinned_tips')); if (m.ok && m.value) pinned = String(m.value); }
       return json(200, {
         me: { id: userId, name: (req.user && req.user.username) || null },
         trip: { title: td.title, start: td.start, end: td.end, currency: trip.currency || null, days_until_start: daysUntil(td.start), days_until_end: daysUntil(td.end) },
         prefs, currency_symbol: CURRENCY_SYMBOL[prefs.home_currency] || prefs.home_currency,
-        pinned_tips: pin.ok ? (pin.value || null) : null,
+        pinned_tips: pinned || null,
         counts: { phrases: PHRASES.length, prefectures: PREFECTURES.length, etiquette: ETIQUETTE.length, gomi: GOMI.length, matsuri: MATSURI.length, sakura: SAKURA.length, checklist: CHECKLIST_ITEMS.length },
       });
     } },
@@ -706,11 +711,19 @@ const PLUGIN = {
     } },
     { method: 'POST', path: '/trip/pin', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
-      const { tripId } = await requireTrip(req, ctx, body.tripId);
+      const { userId, tripId } = await requireTrip(req, ctx, body.tripId);
       const text = String(body.text || '').slice(0, 4000);
-      if (!text) { const r = await attempt(() => ctx.meta.delete('trip', tripId, 'pinned_tips')); return json(200, { pinned_tips: null, cleared: r.ok }); }
-      const r = await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
-      if (!r.ok) return json(400, { error: r.error });
+      // Persist in our own shared table (the reliable store); mirror into the
+      // native ctx.meta best-effort so other TREK surfaces can see it too, but
+      // never fail the request when that host namespace is unavailable.
+      if (!text) {
+        await ctx.db.exec('DELETE FROM pinned_tips WHERE trip_id = ?', tripId);
+        await attempt(() => ctx.meta.delete('trip', tripId, 'pinned_tips'));
+        await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
+        return json(200, { pinned_tips: null, cleared: true });
+      }
+      await ctx.db.exec('INSERT INTO pinned_tips(trip_id, text, by_user, at) VALUES(?, ?, ?, ?) ON CONFLICT(trip_id) DO UPDATE SET text=excluded.text, by_user=excluded.by_user, at=excluded.at', tripId, text, userId, nowIso());
+      await attempt(() => ctx.meta.set('trip', tripId, 'pinned_tips', text));
       await safeBroadcastTrip(ctx, tripId, 'pin:changed', {});
       return json(200, { pinned_tips: text });
     } },
