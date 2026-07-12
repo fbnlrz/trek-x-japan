@@ -1058,6 +1058,7 @@
   var poiState = { cat: 'smoking', loc: null, smoking: null, poi: null, tripLoc: null };
   var POI_TABS = [
     { c: 'smoking', en: 'Smoking areas', de: 'Raucherzonen', mode: 'smoking' },
+    { c: 'venue', en: 'Smoking-OK cafés', de: 'Raucher-Cafés', mode: 'venue' },
     { c: 'konbini', en: 'Konbini', de: 'Konbini', mode: 'live', kind: 'konbini' },
     { c: 'atm', en: 'ATMs', de: 'Geldautomaten', mode: 'live', kind: 'atm' },
     { c: 'pharmacy', en: 'Pharmacies', de: 'Apotheken', mode: 'live', kind: 'pharmacy' },
@@ -1132,15 +1133,47 @@
       if (poiState.loc && pts.length) {
         var lc = poiState.loc;
         var withD = pts.map(function (p) { return { p: p, km: haversineC(lc.lat, lc.lon, p.lat, p.lon) }; }).sort(function (a, b) { return a.km - b.km; }).slice(0, 40);
-        rows = withD.map(function (x) { return poiRow(x.p.name || T('Smoking area', 'Raucherzone'), x.p.near || '', x.p.lat, x.p.lon, x.km); }).join('');
+        rows = withD.map(function (x) { var sub = [x.p.near, x.p.hours, x.p.official ? T('official', 'offiziell') : null].filter(Boolean).join(' · '); return poiRow(x.p.name || T('Smoking area', 'Raucherzone'), sub, x.p.lat, x.p.lon, x.km); }).join('');
         head = '<div class="banner ok" style="margin-bottom:10px">' + T('Nearest smoking area: ', 'Nächste Raucherzone: ') + '<b>' + distLabel(withD[0].km) + '</b>' + T(' away — tap the arrow for directions.', ' entfernt — Pfeil für Route.') + '</div>' + head;
       } else {
         var cities = (sm.cities || []).slice(0, 30);
         rows = '<div class="wrap" style="margin-bottom:8px">' + cities.map(function (c) { return '<span class="chip static">' + esc(c.name) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
           '<div class="muted" style="font-size:12.5px">' + T('Tap “Use my location” to get the nearest area with walking directions.', 'Tippe „Meinen Standort nutzen" für die nächste Zone mit Fußweg.') + '</div>';
       }
-      body.innerHTML = head + rows + attrib;
+      var smAttrib = sm.attribution ? ('<div class="foot" style="margin-top:10px">© ' + esc(sm.attribution) + '</div>') : attrib;
+      body.innerHTML = head + rows + smAttrib;
       wirePoiRows(body);
+    } else if (tab.mode === 'venue') {
+      // Indoor smoking-OK cafés/izakaya (post-2020 ban). Too many to bundle, so
+      // fetched nearest-first from the server once a location is known.
+      var smkLabel = function (s) {
+        var m = { separated: T('separate smoking room', 'getrennter Raucherraum'), isolated: T('isolated smoking room', 'abgetrennter Raucherraum'), yes: T('smoking allowed', 'Rauchen erlaubt'), dedicated: T('smoking room', 'Raucherraum'), outside: T('smoking outside', 'Rauchen draußen') };
+        return (s && m[s]) || T('smoking allowed', 'Rauchen erlaubt');
+      };
+      if (!poiState.loc) {
+        body.innerHTML = '<div class="loading"><span class="spinner"></span></div>';
+        invoke('/smoking?kind=venue', 'GET').then(function (d) {
+          var cnt = (d && d.count) || 0, cities = (d && d.cities) || [];
+          body.innerHTML = '<div class="kicker" style="margin-bottom:6px">' + cnt + ' ' + T('cafés & izakaya that still allow smoking', 'Cafés & Izakaya, in denen Rauchen erlaubt ist') + '</div>' +
+            '<div class="wrap" style="margin-bottom:8px">' + cities.slice(0, 30).map(function (c) { return '<span class="chip static">' + esc(c.name) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
+            '<div class="muted" style="font-size:12.5px">' + T('Tap “Use my location” to get the nearest smoking-OK venues with walking directions.', 'Tippe „Meinen Standort nutzen" für die nächsten Raucher-Lokale mit Fußweg.') + '</div>' + attrib;
+          reportHeight();
+        }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">—</div>'; reportHeight(); });
+        return;
+      }
+      body.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Finding nearby…', 'Suche in der Nähe…') + '</div>';
+      var lcv = poiState.loc;
+      invoke('/smoking?kind=venue&lat=' + lcv.lat + '&lon=' + lcv.lon, 'GET').then(function (d) {
+        var near = (d && d.nearest) || [];
+        if (!near.length) { body.innerHTML = '<div class="muted" style="font-size:12.5px">—</div>'; reportHeight(); return; }
+        var head2 = '<div class="banner ok" style="margin-bottom:10px">' + T('Nearest smoking-OK venue: ', 'Nächstes Raucher-Lokal: ') + '<b>' + distLabel(near[0].km) + '</b>' + T(' away — tap the arrow for directions.', ' entfernt — Pfeil für Route.') + '</div>';
+        body.innerHTML = head2 + near.slice(0, 40).map(function (x) {
+          var nm = x.en || x.name || T('Smoking-OK venue', 'Raucher-Lokal');
+          var sub = [x.type, smkLabel(x.smk), x.near].filter(Boolean).join(' · ');
+          return poiRow(nm, sub, x.lat, x.lon, x.km);
+        }).join('') + attrib;
+        wirePoiRows(body); reportHeight();
+      }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Lookup unavailable right now.', 'Suche gerade nicht verfügbar.') + '</div>'; reportHeight(); });
     } else if (tab.mode === 'live') {
       if (!poiState.loc) { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Set a location above to find the nearest ', 'Setze oben einen Standort für die nächsten ') + esc(T(tab.en, tab.de)) + '.</div>'; return; }
       body.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Finding nearby…', 'Suche in der Nähe…') + '</div>';

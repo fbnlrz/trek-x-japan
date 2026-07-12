@@ -28,7 +28,8 @@ const TRANSPORT = require('./data/transport.json');
 const SPOTS = require('./data/spots.json');
 const DISHES = require('./data/dishes.json');
 const POI = require('./data/poi.json');
-const SMOKING = require('./data/smoking.json'); // ~1300 amenity=smoking_area, OpenStreetMap (ODbL)
+const SMOKING = require('./data/smoking.json'); // ~1300 designated smoking areas — OpenStreetMap (ODbL) + Tokyo Open Data 台東区 (CC BY 4.0)
+const SMOKING_VENUES = require('./data/smoking_venues.json'); // ~3500 venues that permit indoor smoking (cafés/izakaya) — OpenStreetMap (ODbL)
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -366,8 +367,10 @@ const PLUGIN = {
         try {
           SPOTS.forEach(function (s) { if (s.lat != null && s.lon != null) out.push({ id: 'spot-' + s.key, lat: s.lat, lng: s.lon, label: s.name, popupText: (s.city ? s.city + ' — ' : '') + s.en }); });
           POI.forEach(function (p) { if (p.lat != null && p.lon != null) out.push({ id: 'poi-' + p.key, lat: p.lat, lng: p.lon, label: p.name, popupText: p.en }); });
-          // Every designated smoking area in Japan (OpenStreetMap, ODbL).
-          SMOKING.forEach(function (s, i) { out.push({ id: 'smk-' + i, lat: s.lat, lng: s.lon, label: s.name || 'Smoking area', popupText: 'Designated smoking area' + (s.near ? ' · ' + s.near : '') }); });
+          // Only the authoritative (official 台東区) smoking areas go on the trip
+          // map — the full ~1300-area / ~3500-venue set is far too dense to pin and
+          // is served location-aware (nearest-first) via the Essentials tab instead.
+          SMOKING.forEach(function (s, i) { if (s.official) out.push({ id: 'smk-' + i, lat: s.lat, lng: s.lon, label: s.name || 'Smoking area', popupText: 'Designated smoking area' + (s.near ? ' · ' + s.near : '') }); });
         } catch (_) {}
         return out;
       },
@@ -896,19 +899,30 @@ const PLUGIN = {
       POI.forEach(function (p) { if (cats.indexOf(p.cat) < 0) cats.push(p.cat); });
       return json(200, { cats, poi: POI });
     } },
-    // ---- Smoking areas: ALL designated smoking_area in Japan (bundled, OSM) ----
+    // ---- Smoking: every designated smoking AREA + every indoor smoking-OK VENUE
+    // in Japan (bundled). kind=venue switches to cafés/izakaya that still permit
+    // smoking after the 2020 indoor ban. lat/lon → nearest-first with distances.
     { method: 'GET', path: '/smoking', auth: true, async handler(req, ctx) {
       await requireTrip(req, ctx);
+      const kind = String((req.query && req.query.kind) || 'area') === 'venue' ? 'venue' : 'area';
+      const DATA = kind === 'venue' ? SMOKING_VENUES : SMOKING;
       const lat = toNum(req.query && req.query.lat, null), lon = toNum(req.query && req.query.lon, null);
       const cityCounts = {};
-      SMOKING.forEach(function (s) { if (s.near) cityCounts[s.near] = (cityCounts[s.near] || 0) + 1; });
+      DATA.forEach(function (s) { if (s.near) cityCounts[s.near] = (cityCounts[s.near] || 0) + 1; });
       const cities = Object.keys(cityCounts).map(function (n) { return { name: n, n: cityCounts[n] }; }).sort(function (a, b) { return b.n - a.n; });
+      const attribution = kind === 'venue'
+        ? 'OpenStreetMap contributors (ODbL)'
+        : 'OpenStreetMap contributors (ODbL) · Tokyo Open Data 台東区 (CC BY 4.0)';
       if (lat != null && lon != null) {
-        const withD = SMOKING.map(function (s) { return { lat: s.lat, lon: s.lon, name: s.name || null, near: s.near || null, km: haversineKm(lat, lon, s.lat, s.lon) }; });
+        const withD = DATA.map(function (s) { return { lat: s.lat, lon: s.lon, name: s.name || null, en: s.en || null, near: s.near || null, type: s.type || null, smk: s.smk || null, official: !!s.official, hours: s.hours || null, km: haversineKm(lat, lon, s.lat, s.lon) }; });
         withD.sort(function (a, b) { return a.km - b.km; });
-        return json(200, { count: SMOKING.length, cities, nearest: withD.slice(0, 60), attribution: 'OpenStreetMap contributors (ODbL)' });
+        return json(200, { kind, count: DATA.length, cities, nearest: withD.slice(0, 60), attribution });
       }
-      return json(200, { count: SMOKING.length, cities, points: SMOKING, attribution: 'OpenStreetMap contributors (ODbL)' });
+      // Venues (~3500) are too large to ship whole — return city counts only and
+      // let the client fetch nearest-first once it has a location. Areas (~1300)
+      // are light enough to bundle so nearest is instant on "use my location".
+      if (kind === 'venue') return json(200, { kind, count: DATA.length, cities, points: [], attribution });
+      return json(200, { kind, count: DATA.length, cities, points: DATA, attribution });
     } },
     // ---- Nearby (live): konbini / ATMs / pharmacies around a point (Overpass) --
     { method: 'GET', path: '/nearby', auth: true, async handler(req, ctx) {

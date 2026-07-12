@@ -46,10 +46,12 @@ Data is either **shared** with the whole trip or **personal** to you:
   (10% general / 8% consumables), with the ¥5,000 minimum, consumables cap and a
   list of popular tax-free stores.
 - **Essentials** *(location-aware)* — a finder for what you need on the ground:
-  **every designated smoking area in Japan** (~1,300, from OpenStreetMap) with the
-  **nearest to you and walking directions**, plus **live** konbini / ATM / pharmacy
-  lookups around your location (Overpass), coin lockers, luggage forwarding and the
-  konbini chain guide. Uses your device location, falling back to the trip location.
+  **every designated smoking area in Japan** (~1,300, OpenStreetMap + Tokyo Open
+  Data) *and* **~3,500 cafés & izakaya that still permit indoor smoking** after the
+  2020 ban — each with the **nearest to you and walking directions**, plus **live**
+  konbini / ATM / pharmacy lookups around your location (Overpass), coin lockers,
+  luggage forwarding and the konbini chain guide. Uses your device location,
+  falling back to the trip location.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -163,7 +165,7 @@ This plugin requests the following permissions, each for a specific reason:
 | `ws:broadcast:user` | Notifies your own TREK clients when your personal IC balance changes. |
 | `hook:place-detail-provider` | Enriches a place's detail panel in the planner with the note the plugin pinned to it (`placeDetailProvider.getDetails`). |
 | `hook:trip-warning-provider` | Raises planner warnings from the plugin's state (`warningProvider.getWarnings`) — e.g. no weather location set, budget exceeded, Golden Week / New Year / Obon crowding. |
-| `hook:map-marker-provider` | Puts curated Japan spots and practical POIs (smoking areas, foreign-card ATMs, coin lockers, luggage forwarding) onto the trip map (`mapMarkerProvider.getMarkers`). |
+| `hook:map-marker-provider` | Puts curated Japan spots, practical POIs (foreign-card ATMs, coin lockers, luggage forwarding) and the official designated smoking areas onto the trip map (`mapMarkerProvider.getMarkers`). The full ~1,300-area / ~3,500-venue smoking set is served location-aware on the Essentials tab instead, to avoid flooding the map. |
 | `hook:trip-card-provider` | Adds a countdown badge to the trip's card on the TREK dashboard (`tripCardProvider.getCards`). |
 | `hook:pdf-section-provider` | Adds a Japan section (emergency numbers & phrases, prep-checklist status, budget) to the exported trip PDF (`pdfSectionProvider.getSections`). |
 | `http:outbound` | Base marker declaring outbound HTTP. On its own it reaches no host — the specific hosts below are what open. |
@@ -202,11 +204,15 @@ to re-approve the plugin.
 
 ## Data & attribution
 
-Smoking-area locations and the live konbini / ATM / pharmacy lookups come from
-**© OpenStreetMap contributors**, available under the
-[Open Database License (ODbL)](https://www.openstreetmap.org/copyright). All other
-datasets ship inside the plugin.
+Smoking-area/venue locations and the live konbini / ATM / pharmacy lookups come
+from **© OpenStreetMap contributors**, available under the
+[Open Database License (ODbL)](https://www.openstreetmap.org/copyright). The
+official designated smoking areas in Taitō (台東区) additionally come from
+**Tokyo Open Data**, available under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). All other datasets ship
+inside the plugin.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). Plugin code is MIT; bundled OpenStreetMap data is ODbL.
+MIT — see [LICENSE](LICENSE). Plugin code is MIT; bundled OpenStreetMap data is
+ODbL; the Taitō official smoking-area data is Tokyo Open Data (CC BY 4.0).
