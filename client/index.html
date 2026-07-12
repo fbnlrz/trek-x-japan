@@ -292,10 +292,25 @@
   var pending = {}; var reqSeq = 0;
 
   function post(msg) { window.parent.postMessage(msg, '*'); }
+  // Client-side concurrency gate. Each route handler on the plugin fans out to
+  // several host RPC calls (requireTrip alone = getById + trip_cache upsert), and
+  // the host caps a plugin at 16 in-flight RPCs. A page like the dashboard that
+  // fires ~12 routes at once would blow past that cap — the host then refuses the
+  // overflow, surfacing as sporadic 403 (a refused getById) / 500 (a refused
+  // db.query) across unrelated routes. Capping in-flight *routes* here keeps the
+  // downstream RPC fan-out comfortably under the host limit.
+  var MAX_INFLIGHT = 4; var inflight = 0; var queue = [];
+  function pump() {
+    while (inflight < MAX_INFLIGHT && queue.length) {
+      var job = queue.shift(); inflight++;
+      invokeRaw(job.sub, job.method, job.body).then(job.resolve, job.reject)
+        .then(function () { inflight--; pump(); });
+    }
+  }
   // This is a trip-page: tripId is always known from trek:context. Inject it
   // into every call so trip-scoped routes get their (membership-checked) trip;
   // personal routes simply ignore it.
-  function invoke(sub, method, body) {
+  function invokeRaw(sub, method, body) {
     method = method || 'GET';
     if (ctx.tripId != null) {
       if (method === 'GET') sub += (sub.indexOf('?') >= 0 ? '&' : '?') + 'tripId=' + encodeURIComponent(ctx.tripId);
@@ -305,6 +320,12 @@
       var id = 'r' + (++reqSeq);
       pending[id] = { resolve: resolve, reject: reject };
       post({ type: 'trek:invoke', requestId: id, sub: sub, method: method, body: body });
+    });
+  }
+  function invoke(sub, method, body) {
+    return new Promise(function (resolve, reject) {
+      queue.push({ sub: sub, method: method, body: body, resolve: resolve, reject: reject });
+      pump();
     });
   }
   function notify(level, message) { post({ type: 'trek:notify', level: level, message: message }); }
