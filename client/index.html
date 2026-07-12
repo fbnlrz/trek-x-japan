@@ -425,6 +425,7 @@
     tag: '<path d="M20.5 13.5l-7 7a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12.9V5a1 1 0 0 1 1-1h7.9a2 2 0 0 1 1.4.6l6.2 6.2a2 2 0 0 1 0 2.7z"/><circle cx="8.5" cy="8.5" r="1.3"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18"/>',
     gauge: '<path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 15l4-4"/><circle cx="12" cy="15" r="1.3"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
@@ -522,6 +523,7 @@
     { id: 'taxfree', icon: 'tag', en: 'Tax-Free', de: 'Tax-Free', phase: 'trip' },
     { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte', phase: 'trip' },
     { id: 'food', icon: 'food', en: 'Food', de: 'Food', phase: 'trip' },
+    { id: 'poi', icon: 'info', en: 'Essentials', de: 'Essentials', phase: 'trip' },
     { id: 'passport', icon: 'grid', en: 'Passport', de: 'Passport', phase: 'trip' },
     { id: 'safety', icon: 'shield', en: 'Safety', de: 'Sicherheit', phase: 'trip' },
     // Config
@@ -1025,6 +1027,58 @@
         var s = list[parseInt(b.getAttribute('data-i'), 10)]; if (!s) return;
         b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
         invoke('/itinerary/add', 'POST', { name: s.name, notes: s.city + ' — ' + T(s.en, s.de), city: s.city, lat: s.lat, lng: s.lon, tag: s.city })
+          .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
+          .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message); });
+      };
+    });
+  }
+
+  // ---- Essentials: smoking areas, konbini, ATMs, lockers, luggage … ------
+  var poiState = { cat: 'smoking' };
+  var POI_CAT = {
+    smoking: { en: 'Smoking areas', de: 'Raucherzonen', icon: 'info' },
+    konbini: { en: 'Konbini', de: 'Konbini', icon: 'food' },
+    atm: { en: 'ATMs (foreign cards)', de: 'Geldautomaten', icon: 'card' },
+    locker: { en: 'Coin lockers', de: 'Schließfächer', icon: 'grid' },
+    luggage: { en: 'Luggage forwarding', de: 'Gepäckversand', icon: 'plane' },
+    drugstore: { en: 'Drugstores', de: 'Drogerien', icon: 'tag' },
+    wifi: { en: 'Wi-Fi', de: 'WLAN', icon: 'globe' }
+  };
+  SECTIONS.poi = function (panel) {
+    return invoke('/poi', 'GET').then(function (d) { renderPoi(panel, d); });
+  };
+  function renderPoi(panel, d) {
+    var cats = d.cats || [];
+    if (cats.indexOf(poiState.cat) < 0 && cats.length) poiState.cat = cats[0];
+    var chips = cats.map(function (c) {
+      var m = POI_CAT[c] || { en: c, de: c };
+      return '<button class="chip" data-pcat="' + esc(c) + '" aria-pressed="' + (poiState.cat === c ? 'true' : 'false') + '">' + esc(T(m.en, m.de)) + '</button>';
+    }).join('');
+    var list = (d.poi || []).filter(function (p) { return p.cat === poiState.cat; });
+    var rows = list.map(function (p, i) {
+      var geo = p.lat != null && p.lon != null;
+      return '<div style="padding:10px 0;border-top:1px solid var(--border-faint)">' +
+        '<div class="between"><span class="row" style="gap:7px;min-width:0">' + svg((POI_CAT[p.cat] || {}).icon || 'pin') +
+        (geo ? '<b class="lnk" data-maps="' + esc(p.name + ' ' + (p.city || '')) + '">' + esc(p.name) + '</b>' : '<b>' + esc(p.name) + '</b>') + '</span>' +
+        (p.city ? '<span class="chip static">' + esc(p.city) + '</span>' : '') + '</div>' +
+        '<div class="muted" style="font-size:12.5px;margin-top:3px">' + esc(T(p.en, p.de)) + '</div>' +
+        (geo ? '<div class="between" style="margin-top:7px"><span></span><button class="btn sec sm pplan" data-i="' + i + '">' + svg('plus') + ' ' + T('Add to planner', 'Zum Planer') + '</button></div>' : '') +
+        '</div>';
+    }).join('') || '<div class="loading">' + T('Nothing here.', 'Nichts hier.') + '</div>';
+    var m = POI_CAT[poiState.cat] || {};
+    panel.innerHTML =
+      '<div class="card"><h2>' + svg('info') + T('Essentials', 'Essentials') + '</h2>' +
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Practical spots on the ground — designated smoking areas, konbini, foreign-card ATMs, lockers, luggage forwarding and more. Tap a name for Maps.', 'Praktische Orte vor Ort — Raucherzonen, Konbini, Karten-Geldautomaten, Schließfächer, Gepäckversand und mehr. Tippe den Namen für Karten.') + '</div>' +
+        '<div class="wrap" style="margin-bottom:10px">' + chips + '</div>' +
+        '<div class="kicker" style="margin-bottom:2px">' + esc(T(m.en || '', m.de || '')) + '</div>' +
+        '<div>' + rows + '</div></div>';
+    panel.querySelectorAll('[data-pcat]').forEach(function (b) { b.onclick = function () { poiState.cat = b.getAttribute('data-pcat'); renderPoi(panel, d); reportHeight(); }; });
+    panel.querySelectorAll('.lnk[data-maps]').forEach(function (el) { el.title = T('Open in Maps', 'In Karten öffnen'); el.onclick = function () { openMaps(el.getAttribute('data-maps')); }; });
+    panel.querySelectorAll('.pplan').forEach(function (b) {
+      b.onclick = function () {
+        var p = list[parseInt(b.getAttribute('data-i'), 10)]; if (!p) return;
+        b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
+        invoke('/itinerary/add', 'POST', { name: p.name, notes: T(p.en, p.de), city: p.city || '', lat: p.lat, lng: p.lon, tag: T((POI_CAT[p.cat] || {}).en || p.cat, (POI_CAT[p.cat] || {}).de || p.cat) })
           .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
           .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message); });
       };

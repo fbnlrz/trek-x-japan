@@ -27,6 +27,7 @@ const CITIES = require('./data/cities.json');
 const TRANSPORT = require('./data/transport.json');
 const SPOTS = require('./data/spots.json');
 const DISHES = require('./data/dishes.json');
+const POI = require('./data/poi.json');
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -350,6 +351,65 @@ const PLUGIN = {
           }
         } catch (e) { ctx.log.warn('warnings', { msg: String(e && e.message) }); }
         return out;
+      },
+    },
+    // (3.3.x) Contribute markers to the trip map: curated spots + practical POIs
+    // (smoking areas, foreign-card ATMs, lockers, luggage forwarding). Userless.
+    mapMarkerProvider: {
+      async getMarkers(tripId, ctx) {
+        const out = [];
+        try {
+          SPOTS.forEach(function (s) { if (s.lat != null && s.lon != null) out.push({ id: 'spot-' + s.key, lat: s.lat, lng: s.lon, label: s.name, popupText: (s.city ? s.city + ' — ' : '') + s.en }); });
+          POI.forEach(function (p) { if (p.lat != null && p.lon != null) out.push({ id: 'poi-' + p.key, lat: p.lat, lng: p.lon, label: p.name, popupText: p.en }); });
+        } catch (_) {}
+        return out.slice(0, 120);
+      },
+    },
+    // (3.3.x) Badge on the trip's dashboard card: countdown from cached dates.
+    tripCardProvider: {
+      async getCards(tripIds, ctx) {
+        const out = [];
+        try {
+          const ids = Array.isArray(tripIds) ? tripIds : [];
+          for (const rawId of ids) {
+            const id = toNum(rawId, null); if (id == null) continue;
+            const tc = await ctx.db.query('SELECT start, end FROM trip_cache WHERE trip_id = ?', id);
+            if (!tc.length) continue;
+            const d = daysUntil(tc[0].start), dEnd = daysUntil(tc[0].end);
+            let val = null;
+            if (d != null && d > 0) val = d + ' day' + (d === 1 ? '' : 's') + ' to go';
+            else if (d === 0) val = 'Departure day';
+            else if (dEnd != null && dEnd >= 0) val = 'In Japan · ' + dEnd + ' left';
+            if (val) out.push({ tripId: id, id: 'trek-japan', label: 'TREK × Japan', value: val });
+          }
+        } catch (_) {}
+        return out;
+      },
+    },
+    // (3.3.x) Add a Japan section to the exported trip PDF: emergency numbers &
+    // phrases, prep-checklist status and the shared budget. Userless.
+    pdfSectionProvider: {
+      async getSections(tripId, ctx) {
+        const id = toNum(tripId, null); const sections = [];
+        try {
+          const emg = PHRASES.filter(function (p) { return p.category === EMERGENCY_PHRASE_CATEGORY; }).slice(0, 8);
+          sections.push({
+            title: 'TREK x Japan — Emergency',
+            paragraphs: ['Police 110  ·  Fire / Ambulance 119', 'Show the Japanese phrase if you need help.'],
+            table: { headers: ['English', 'Japanese', 'Romaji'], rows: emg.map(function (p) { return [p.en, p.jp, p.romaji]; }) },
+          });
+          if (id != null) {
+            const cl = await ctx.db.query('SELECT COALESCE(SUM(done),0) AS d FROM checklist WHERE trip_id = ?', id);
+            const done = cl.length ? cl[0].d : 0, total = CHECKLIST_ITEMS.length;
+            sections.push({ title: 'TREK x Japan — Prep checklist', paragraphs: [done + ' of ' + total + ' items done.'], table: { headers: ['Item'], rows: CHECKLIST_ITEMS.map(function (i) { return [i.en]; }) } });
+            const b = await ctx.db.query('SELECT planned_yen FROM budget WHERE trip_id = ?', id);
+            const planned = b.length ? b[0].planned_yen : 0;
+            const sp = await ctx.db.query('SELECT COALESCE(SUM(amount_yen),0) AS s FROM spend WHERE trip_id = ?', id);
+            const spent = sp.length ? sp[0].s : 0;
+            if (planned > 0 || spent > 0) sections.push({ title: 'TREK x Japan — Budget', paragraphs: ['Planned: JPY ' + planned.toLocaleString('en-US'), 'Spent: JPY ' + spent.toLocaleString('en-US'), 'Remaining: JPY ' + (planned - spent).toLocaleString('en-US')] });
+          }
+        } catch (_) {}
+        return sections;
       },
     },
   },
@@ -821,6 +881,13 @@ const PLUGIN = {
       const cats = [];
       DISHES.forEach(function (dsh) { if (cats.indexOf(dsh.cat) < 0) cats.push(dsh.cat); });
       return json(200, { cats, dishes: DISHES });
+    } },
+    // ---- Essentials: smoking areas, konbini, ATMs, lockers, luggage … --------
+    { method: 'GET', path: '/poi', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const cats = [];
+      POI.forEach(function (p) { if (cats.indexOf(p.cat) < 0) cats.push(p.cat); });
+      return json(200, { cats, poi: POI });
     } },
     // On-demand translator via the keyless MyMemory API (EN/DE <-> JA).
     { method: 'POST', path: '/translate', auth: true, async handler(req, ctx) {

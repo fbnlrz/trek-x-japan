@@ -45,6 +45,9 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Tax-Free** *(calculator)* — work out the consumption-tax refund on a purchase
   (10% general / 8% consumables), with the ¥5,000 minimum, consumables cap and a
   list of popular tax-free stores.
+- **Essentials** *(reference + planner)* — designated **smoking areas**, the
+  konbini chains (7-Eleven / FamilyMart / Lawson), **foreign-card ATMs**, coin
+  lockers, luggage forwarding and drugstores; tap for Maps or add to the planner.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -58,15 +61,19 @@ Data is either **shared** with the whole trip or **personal** to you:
   from the JMA feed, the latest **English-language Japan news** headlines, and
   quick-access emergency phrases.
 
-**Deep TREK 3.2.1 integration.** Beyond its own shared board, the hub plugs into
+**Deep TREK integration.** Beyond its own shared board, the hub plugs into
 the trip planner itself: it reads the trip's **native packing list** and
 **files**, mirrors expenses into TREK's **native budget** (Costs addon) and reads
-them back, turns a matsuri or city into a **planner place** (creating days and
+them back, turns a matsuri, spot or POI into a **planner place** (creating days and
 assignments), pins shared tips and place notes via **trip meta**, enriches a
 place's **detail panel** and raises **planner warnings** (no weather set, budget
 exceeded, Golden Week / New Year / Obon crowding), keeps a **live activity feed**
-from core trip events, and broadcasts changes to other TREK clients. Every one of
-these degrades gracefully when an addon or edit-permission is missing.
+from core trip events, and broadcasts changes to other TREK clients. On TREK
+**3.3+** it also contributes natively: curated spots and practical POIs as
+**map markers**, a countdown **badge on the dashboard trip card**, and a Japan
+**section in the exported trip PDF** (emergency numbers & phrases, prep status,
+budget). Every one of these degrades gracefully on older hosts or when an addon
+or edit-permission is missing.
 
 Everything is local-first: the datasets ship inside the plugin and all state
 lives in the plugin's own database. Network calls are limited to three free,
@@ -154,6 +161,9 @@ This plugin requests the following permissions, each for a specific reason:
 | `ws:broadcast:user` | Notifies your own TREK clients when your personal IC balance changes. |
 | `hook:place-detail-provider` | Enriches a place's detail panel in the planner with the note the plugin pinned to it (`placeDetailProvider.getDetails`). |
 | `hook:trip-warning-provider` | Raises planner warnings from the plugin's state (`warningProvider.getWarnings`) — e.g. no weather location set, budget exceeded, Golden Week / New Year / Obon crowding. |
+| `hook:map-marker-provider` | Puts curated Japan spots and practical POIs (smoking areas, foreign-card ATMs, coin lockers, luggage forwarding) onto the trip map (`mapMarkerProvider.getMarkers`). |
+| `hook:trip-card-provider` | Adds a countdown badge to the trip's card on the TREK dashboard (`tripCardProvider.getCards`). |
+| `hook:pdf-section-provider` | Adds a Japan section (emergency numbers & phrases, prep-checklist status, budget) to the exported trip PDF (`pdfSectionProvider.getSections`). |
 | `http:outbound` | Base marker declaring outbound HTTP. On its own it reaches no host — the specific hosts below are what open. |
 | `http:outbound:api.open-meteo.com` | Current weather and the 5-day forecast for the trip's weather location (Open-Meteo, no API key). |
 | `http:outbound:open.er-api.com` | JPY exchange rates for the live yen ⇄ home-currency conversion (open.er-api.com, no API key). |

@@ -1,7 +1,7 @@
 {
   "id": "trek-x-japan",
   "name": "TREK × Japan",
-  "version": "1.2.0",
+  "version": "3.0.0",
   "apiVersion": 1,
   "type": "trip-page",
   "author": "fbnlrz",
@@ -29,6 +29,9 @@
     "ws:broadcast:user",
     "hook:place-detail-provider",
     "hook:trip-warning-provider",
+    "hook:map-marker-provider",
+    "hook:trip-card-provider",
+    "hook:pdf-section-provider",
     "http:outbound",
     "http:outbound:api.open-meteo.com",
     "http:outbound:open.er-api.com",
