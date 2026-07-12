@@ -1033,57 +1033,112 @@
     });
   }
 
-  // ---- Essentials: smoking areas, konbini, ATMs, lockers, luggage … ------
-  var poiState = { cat: 'smoking' };
-  var POI_CAT = {
-    smoking: { en: 'Smoking areas', de: 'Raucherzonen', icon: 'info' },
-    konbini: { en: 'Konbini', de: 'Konbini', icon: 'food' },
-    atm: { en: 'ATMs (foreign cards)', de: 'Geldautomaten', icon: 'card' },
-    locker: { en: 'Coin lockers', de: 'Schließfächer', icon: 'grid' },
-    luggage: { en: 'Luggage forwarding', de: 'Gepäckversand', icon: 'plane' },
-    drugstore: { en: 'Drugstores', de: 'Drogerien', icon: 'tag' },
-    wifi: { en: 'Wi-Fi', de: 'WLAN', icon: 'globe' }
-  };
+  // ---- Essentials: location-aware finder (smoking bundled; konbini live) --
+  var poiState = { cat: 'smoking', loc: null, smoking: null, poi: null, tripLoc: null };
+  var POI_TABS = [
+    { c: 'smoking', en: 'Smoking areas', de: 'Raucherzonen', mode: 'smoking' },
+    { c: 'konbini', en: 'Konbini', de: 'Konbini', mode: 'live', kind: 'konbini' },
+    { c: 'atm', en: 'ATMs', de: 'Geldautomaten', mode: 'live', kind: 'atm' },
+    { c: 'pharmacy', en: 'Pharmacies', de: 'Apotheken', mode: 'live', kind: 'pharmacy' },
+    { c: 'locker', en: 'Lockers', de: 'Schließfächer', mode: 'poi' },
+    { c: 'luggage', en: 'Luggage', de: 'Gepäck', mode: 'poi' },
+    { c: 'wifi', en: 'Wi-Fi', de: 'WLAN', mode: 'poi' }
+  ];
+  function distLabel(km) { return km < 1 ? Math.round(km * 1000) + ' m' : km.toFixed(1) + ' km'; }
+  function dirUrl(la, lo) { var o = poiState.loc ? (poiState.loc.lat + ',' + poiState.loc.lon) : ''; return 'https://www.google.com/maps/dir/?api=1' + (o ? '&origin=' + encodeURIComponent(o) : '') + '&destination=' + encodeURIComponent(la + ',' + lo) + '&travelmode=walking'; }
   SECTIONS.poi = function (panel) {
-    return invoke('/poi', 'GET').then(function (d) { renderPoi(panel, d); });
+    return Promise.all([
+      invoke('/poi', 'GET').catch(function () { return { poi: [] }; }),
+      invoke('/smoking', 'GET').catch(function () { return { count: 0, cities: [], points: [] }; }),
+      invoke('/prefs', 'GET').catch(function () { return {}; })
+    ]).then(function (r) {
+      poiState.poi = r[0] || {}; poiState.smoking = r[1] || {};
+      var tp = (r[2] && r[2].trip_prefs) || {};
+      var la = parseFloat(tp.weather_lat), lo = parseFloat(tp.weather_lon);
+      poiState.tripLoc = (isFinite(la) && isFinite(lo)) ? { lat: la, lon: lo, label: tp.weather_city || T('trip location', 'Reiseort') } : null;
+      if (!poiState.loc && poiState.tripLoc) poiState.loc = poiState.tripLoc;
+      renderPoi(panel);
+    });
   };
-  function renderPoi(panel, d) {
-    var cats = d.cats || [];
-    if (cats.indexOf(poiState.cat) < 0 && cats.length) poiState.cat = cats[0];
-    var chips = cats.map(function (c) {
-      var m = POI_CAT[c] || { en: c, de: c };
-      return '<button class="chip" data-pcat="' + esc(c) + '" aria-pressed="' + (poiState.cat === c ? 'true' : 'false') + '">' + esc(T(m.en, m.de)) + '</button>';
-    }).join('');
-    var list = (d.poi || []).filter(function (p) { return p.cat === poiState.cat; });
-    var rows = list.map(function (p, i) {
-      var geo = p.lat != null && p.lon != null;
-      return '<div style="padding:10px 0;border-top:1px solid var(--border-faint)">' +
-        '<div class="between"><span class="row" style="gap:7px;min-width:0">' + svg((POI_CAT[p.cat] || {}).icon || 'pin') +
-        (geo ? '<b class="lnk" data-maps="' + esc(p.name + ' ' + (p.city || '')) + '">' + esc(p.name) + '</b>' : '<b>' + esc(p.name) + '</b>') + '</span>' +
-        (p.city ? '<span class="chip static">' + esc(p.city) + '</span>' : '') + '</div>' +
-        '<div class="muted" style="font-size:12.5px;margin-top:3px">' + esc(T(p.en, p.de)) + '</div>' +
-        (geo ? '<div class="between" style="margin-top:7px"><span></span><button class="btn sec sm pplan" data-i="' + i + '">' + svg('plus') + ' ' + T('Add to planner', 'Zum Planer') + '</button></div>' : '') +
-        '</div>';
-    }).join('') || '<div class="loading">' + T('Nothing here.', 'Nichts hier.') + '</div>';
-    var m = POI_CAT[poiState.cat] || {};
+  function useMyLocation(panel) {
+    if (!navigator.geolocation) { notify('warning', T('Location not available here.', 'Standort hier nicht verfügbar.')); return; }
+    notify('info', T('Locating…', ' Orte…'));
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      poiState.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: T('your location', 'dein Standort'), me: true };
+      renderPoi(panel); reportHeight();
+    }, function () { notify('error', T('Could not get your location — using the trip location.', 'Standort nicht ermittelbar — nutze den Reiseort.')); if (poiState.tripLoc) { poiState.loc = poiState.tripLoc; renderPoi(panel); } },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+  }
+  function renderPoi(panel) {
+    var tab = null; POI_TABS.forEach(function (t) { if (t.c === poiState.cat) tab = t; }); if (!tab) { poiState.cat = 'smoking'; tab = POI_TABS[0]; }
+    var chips = POI_TABS.map(function (t) { return '<button class="chip" data-pcat="' + t.c + '" aria-pressed="' + (poiState.cat === t.c ? 'true' : 'false') + '">' + esc(T(t.en, t.de)) + '</button>'; }).join('');
+    var locLabel = poiState.loc ? esc(poiState.loc.label) : T('not set', 'nicht gesetzt');
+    var locBar =
+      '<div class="between" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
+        '<div class="row" style="gap:6px;font-size:12.5px">' + svg('pin') + '<span class="muted">' + T('Near:', 'Nähe:') + '</span> <b>' + locLabel + '</b></div>' +
+        '<button class="btn sec sm" id="poi-loc">' + svg('pin') + ' ' + T('Use my location', 'Meinen Standort nutzen') + '</button>' +
+      '</div>';
+    var body = '<div id="poi-body"><div class="loading"><span class="spinner"></span></div></div>';
     panel.innerHTML =
       '<div class="card"><h2>' + svg('info') + T('Essentials', 'Essentials') + '</h2>' +
-        '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Practical spots on the ground — designated smoking areas, konbini, foreign-card ATMs, lockers, luggage forwarding and more. Tap a name for Maps.', 'Praktische Orte vor Ort — Raucherzonen, Konbini, Karten-Geldautomaten, Schließfächer, Gepäckversand und mehr. Tippe den Namen für Karten.') + '</div>' +
-        '<div class="wrap" style="margin-bottom:10px">' + chips + '</div>' +
-        '<div class="kicker" style="margin-bottom:2px">' + esc(T(m.en || '', m.de || '')) + '</div>' +
-        '<div>' + rows + '</div></div>';
-    panel.querySelectorAll('[data-pcat]').forEach(function (b) { b.onclick = function () { poiState.cat = b.getAttribute('data-pcat'); renderPoi(panel, d); reportHeight(); }; });
-    panel.querySelectorAll('.lnk[data-maps]').forEach(function (el) { el.title = T('Open in Maps', 'In Karten öffnen'); el.onclick = function () { openMaps(el.getAttribute('data-maps')); }; });
-    panel.querySelectorAll('.pplan').forEach(function (b) {
-      b.onclick = function () {
-        var p = list[parseInt(b.getAttribute('data-i'), 10)]; if (!p) return;
-        b.disabled = true; b.innerHTML = svg('check') + ' ' + T('Added', 'Hinzugefügt');
-        invoke('/itinerary/add', 'POST', { name: p.name, notes: T(p.en, p.de), city: p.city || '', lat: p.lat, lng: p.lon, tag: T((POI_CAT[p.cat] || {}).en || p.cat, (POI_CAT[p.cat] || {}).de || p.cat) })
-          .then(function (r) { notify('success', r && r.located ? T('Added & located in the planner', 'Verortet zum Planer hinzugefügt') : T('Added to the trip planner', 'Zum Reise-Planer hinzugefügt')); })
-          .catch(function (e) { b.disabled = false; b.innerHTML = svg('plus') + ' ' + T('Add to planner', 'Zum Planer'); notify('error', e.message); });
-      };
-    });
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Find what you need on the ground — the nearest smoking area with directions, konbini, ATMs, pharmacies, lockers and luggage forwarding.', 'Finde, was du vor Ort brauchst — die nächste Raucherzone mit Route, Konbini, Geldautomaten, Apotheken, Schließfächer und Gepäckversand.') + '</div>' +
+        '<div class="wrap" style="margin-bottom:10px">' + chips + '</div>' + locBar + body + '</div>';
+    panel.querySelectorAll('[data-pcat]').forEach(function (b) { b.onclick = function () { poiState.cat = b.getAttribute('data-pcat'); renderPoi(panel); reportHeight(); }; });
+    var lb = panel.querySelector('#poi-loc'); if (lb) lb.onclick = function () { useMyLocation(panel); };
+    fillPoiBody(panel, tab);
   }
+  function poiRow(name, sub, la, lo, km) {
+    var geo = la != null && lo != null;
+    return '<div class="listrow" style="align-items:flex-start"><span style="color:var(--text-faint)">' + svg('pin') + '</span>' +
+      '<span style="flex:1;min-width:0"><b>' + esc(name) + '</b>' + (km != null ? ' <span class="faint" style="font-size:11px">· ' + distLabel(km) + '</span>' : '') +
+      (sub ? '<div class="faint" style="font-size:11px">' + esc(sub) + '</div>' : '') + '</span>' +
+      (geo ? '<span class="row" style="gap:6px;flex:none">' +
+        '<button class="iconbtn poi-map" data-la="' + la + '" data-lo="' + lo + '" title="' + T('Maps', 'Karten') + '">' + svg('pin') + '</button>' +
+        '<button class="iconbtn poi-dir" data-la="' + la + '" data-lo="' + lo + '" title="' + T('Directions', 'Route') + '">' + svg('external') + '</button></span>' : '') +
+      '</div>';
+  }
+  function wirePoiRows(el) {
+    el.querySelectorAll('.poi-map').forEach(function (b) { b.onclick = function () { openMaps(b.getAttribute('data-la') + ',' + b.getAttribute('data-lo')); }; });
+    el.querySelectorAll('.poi-dir').forEach(function (b) { b.onclick = function () { openUrl(dirUrl(b.getAttribute('data-la'), b.getAttribute('data-lo'))); }; });
+  }
+  function fillPoiBody(panel, tab) {
+    var body = panel.querySelector('#poi-body'); if (!body) return;
+    var attrib = '<div class="foot" style="margin-top:10px">© OpenStreetMap contributors (ODbL)</div>';
+    if (tab.mode === 'smoking') {
+      var sm = poiState.smoking || {}; var pts = sm.points || [];
+      var head = '<div class="kicker" style="margin-bottom:6px">' + (sm.count || pts.length) + ' ' + T('designated smoking areas in Japan', 'ausgewiesene Raucherzonen in Japan') + '</div>';
+      var rows;
+      if (poiState.loc && pts.length) {
+        var lc = poiState.loc;
+        var withD = pts.map(function (p) { return { p: p, km: haversineC(lc.lat, lc.lon, p.lat, p.lon) }; }).sort(function (a, b) { return a.km - b.km; }).slice(0, 40);
+        rows = withD.map(function (x) { return poiRow(x.p.name || T('Smoking area', 'Raucherzone'), x.p.near || '', x.p.lat, x.p.lon, x.km); }).join('');
+        head = '<div class="banner ok" style="margin-bottom:10px">' + T('Nearest smoking area: ', 'Nächste Raucherzone: ') + '<b>' + distLabel(withD[0].km) + '</b>' + T(' away — tap the arrow for directions.', ' entfernt — Pfeil für Route.') + '</div>' + head;
+      } else {
+        var cities = (sm.cities || []).slice(0, 30);
+        rows = '<div class="wrap" style="margin-bottom:8px">' + cities.map(function (c) { return '<span class="chip static">' + esc(c.name) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
+          '<div class="muted" style="font-size:12.5px">' + T('Tap “Use my location” to get the nearest area with walking directions.', 'Tippe „Meinen Standort nutzen" für die nächste Zone mit Fußweg.') + '</div>';
+      }
+      body.innerHTML = head + rows + attrib;
+      wirePoiRows(body);
+    } else if (tab.mode === 'live') {
+      if (!poiState.loc) { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Set a location above to find the nearest ', 'Setze oben einen Standort für die nächsten ') + esc(T(tab.en, tab.de)) + '.</div>'; return; }
+      body.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Finding nearby…', 'Suche in der Nähe…') + '</div>';
+      var lc2 = poiState.loc;
+      invoke('/nearby?kind=' + tab.kind + '&lat=' + lc2.lat + '&lon=' + lc2.lon, 'GET').then(function (d) {
+        var items = (d && d.items) || [];
+        if (!items.length) { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + (d && d.error ? T('Live lookup unavailable right now.', 'Live-Suche gerade nicht verfügbar.') : T('None found within ~2 km.', 'Nichts im Umkreis von ~2 km.')) + '</div>'; reportHeight(); return; }
+        body.innerHTML = '<div class="kicker" style="margin-bottom:6px">' + items.length + ' ' + esc(T(tab.en, tab.de)) + ' ' + T('near you', 'in der Nähe') + '</div>' +
+          items.map(function (x) { return poiRow(x.name || esc(T(tab.en, tab.de)), '', x.lat, x.lon, x.km); }).join('') + attrib;
+        wirePoiRows(body); reportHeight();
+      }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Live lookup unavailable right now.', 'Live-Suche gerade nicht verfügbar.') + '</div>'; reportHeight(); });
+    } else {
+      var list = ((poiState.poi && poiState.poi.poi) || []).filter(function (p) { return p.cat === tab.c; });
+      body.innerHTML = list.map(function (p) { return poiRow(p.name, T(p.en, p.de), p.lat, p.lon, null) + (p.city ? '' : ''); }).join('') || '<div class="muted" style="font-size:12.5px">—</div>';
+      wirePoiRows(body);
+    }
+    reportHeight();
+  }
+  function haversineC(aLat, aLon, bLat, bLon) { var R = 6371, r = Math.PI / 180; var dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r; var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) * Math.sin(dLon / 2); return 2 * R * Math.asin(Math.sqrt(s)); }
 
   // ---- Tax-Free: consumption-tax refund calculator (client-only) ---------
   var taxState = { amount: '', kind: 'general' };

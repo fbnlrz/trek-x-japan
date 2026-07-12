@@ -45,9 +45,11 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Tax-Free** *(calculator)* — work out the consumption-tax refund on a purchase
   (10% general / 8% consumables), with the ¥5,000 minimum, consumables cap and a
   list of popular tax-free stores.
-- **Essentials** *(reference + planner)* — designated **smoking areas**, the
-  konbini chains (7-Eleven / FamilyMart / Lawson), **foreign-card ATMs**, coin
-  lockers, luggage forwarding and drugstores; tap for Maps or add to the planner.
+- **Essentials** *(location-aware)* — a finder for what you need on the ground:
+  **every designated smoking area in Japan** (~1,300, from OpenStreetMap) with the
+  **nearest to you and walking directions**, plus **live** konbini / ATM / pharmacy
+  lookups around your location (Overpass), coin lockers, luggage forwarding and the
+  konbini chain guide. Uses your device location, falling back to the trip location.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -170,6 +172,7 @@ This plugin requests the following permissions, each for a specific reason:
 | `http:outbound:www.jma.go.jp` | The recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
 | `http:outbound:japantoday.com` | Latest English-language Japan news headlines on the Safety tab (Japan Today national RSS feed, no API key). |
 | `http:outbound:api.mymemory.translated.net` | On-demand EN/DE ⇄ Japanese translation for the phrasebook's translator (MyMemory API, no API key). |
+| `http:outbound:overpass-api.de` | Live "near me" lookups of konbini, ATMs and pharmacies around your location on the Essentials tab (OpenStreetMap Overpass, no API key). Smoking-area data is bundled, not fetched. |
 
 The native-budget features (`ctx.costs.*`) need TREK's **Costs (budget) addon**
 enabled on the trip; everything else works without it and degrades gracefully.
@@ -197,6 +200,13 @@ to re-approve the plugin.
    shared and show who did what, while your IC card and phrase favourites stay
    personal.
 
+## Data & attribution
+
+Smoking-area locations and the live konbini / ATM / pharmacy lookups come from
+**© OpenStreetMap contributors**, available under the
+[Open Database License (ODbL)](https://www.openstreetmap.org/copyright). All other
+datasets ship inside the plugin.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Plugin code is MIT; bundled OpenStreetMap data is ODbL.

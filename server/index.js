@@ -28,6 +28,7 @@ const TRANSPORT = require('./data/transport.json');
 const SPOTS = require('./data/spots.json');
 const DISHES = require('./data/dishes.json');
 const POI = require('./data/poi.json');
+const SMOKING = require('./data/smoking.json'); // ~1300 amenity=smoking_area, OpenStreetMap (ODbL)
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -164,6 +165,10 @@ function normReservation(x) {
 }
 
 // remote refreshers
+function haversineKm(aLat, aLon, bLat, bLon) { const R = 6371, r = Math.PI / 180; const dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r; const s = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); }
+// Live "near me" categories that are too dense to bundle (konbini alone ~56k) —
+// fetched on demand from OpenStreetMap via Overpass around the user's location.
+const OVERPASS_FILTERS = { konbini: ['"amenity"="convenience"'], atm: ['"amenity"="atm"'], pharmacy: ['"amenity"="pharmacy"'], vending: ['"amenity"="vending_machine"'] };
 async function timedFetch(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('http ' + res.status); return res.json(); }
 async function timedFetchText(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/rss+xml, application/xml, text/xml, */*' } }); if (!res.ok) throw new Error('http ' + res.status); return res.text(); }
 // Minimal RSS reader: pull a tag's text out of an <item> block, unwrap CDATA,
@@ -361,8 +366,10 @@ const PLUGIN = {
         try {
           SPOTS.forEach(function (s) { if (s.lat != null && s.lon != null) out.push({ id: 'spot-' + s.key, lat: s.lat, lng: s.lon, label: s.name, popupText: (s.city ? s.city + ' — ' : '') + s.en }); });
           POI.forEach(function (p) { if (p.lat != null && p.lon != null) out.push({ id: 'poi-' + p.key, lat: p.lat, lng: p.lon, label: p.name, popupText: p.en }); });
+          // Every designated smoking area in Japan (OpenStreetMap, ODbL).
+          SMOKING.forEach(function (s, i) { out.push({ id: 'smk-' + i, lat: s.lat, lng: s.lon, label: s.name || 'Smoking area', popupText: 'Designated smoking area' + (s.near ? ' · ' + s.near : '') }); });
         } catch (_) {}
-        return out.slice(0, 120);
+        return out;
       },
     },
     // (3.3.x) Badge on the trip's dashboard card: countdown from cached dates.
@@ -882,12 +889,54 @@ const PLUGIN = {
       DISHES.forEach(function (dsh) { if (cats.indexOf(dsh.cat) < 0) cats.push(dsh.cat); });
       return json(200, { cats, dishes: DISHES });
     } },
-    // ---- Essentials: smoking areas, konbini, ATMs, lockers, luggage … --------
+    // ---- Essentials: konbini chains, ATMs, lockers, luggage, drugstores … -----
     { method: 'GET', path: '/poi', auth: true, async handler(req, ctx) {
       await requireTrip(req, ctx);
       const cats = [];
       POI.forEach(function (p) { if (cats.indexOf(p.cat) < 0) cats.push(p.cat); });
       return json(200, { cats, poi: POI });
+    } },
+    // ---- Smoking areas: ALL designated smoking_area in Japan (bundled, OSM) ----
+    { method: 'GET', path: '/smoking', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const lat = toNum(req.query && req.query.lat, null), lon = toNum(req.query && req.query.lon, null);
+      const cityCounts = {};
+      SMOKING.forEach(function (s) { if (s.near) cityCounts[s.near] = (cityCounts[s.near] || 0) + 1; });
+      const cities = Object.keys(cityCounts).map(function (n) { return { name: n, n: cityCounts[n] }; }).sort(function (a, b) { return b.n - a.n; });
+      if (lat != null && lon != null) {
+        const withD = SMOKING.map(function (s) { return { lat: s.lat, lon: s.lon, name: s.name || null, near: s.near || null, km: haversineKm(lat, lon, s.lat, s.lon) }; });
+        withD.sort(function (a, b) { return a.km - b.km; });
+        return json(200, { count: SMOKING.length, cities, nearest: withD.slice(0, 60), attribution: 'OpenStreetMap contributors (ODbL)' });
+      }
+      return json(200, { count: SMOKING.length, cities, points: SMOKING, attribution: 'OpenStreetMap contributors (ODbL)' });
+    } },
+    // ---- Nearby (live): konbini / ATMs / pharmacies around a point (Overpass) --
+    { method: 'GET', path: '/nearby', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const lat = toNum(req.query && req.query.lat, null), lon = toNum(req.query && req.query.lon, null);
+      const kind = String((req.query && req.query.kind) || 'konbini');
+      const filter = OVERPASS_FILTERS[kind];
+      if (lat == null || lon == null) return json(400, { error: 'lat/lon required' });
+      if (!filter) return json(400, { error: 'unknown kind' });
+      const key = 'nearby:' + kind + ':' + lat.toFixed(3) + ',' + lon.toFixed(3);
+      const cached = await cacheGet(ctx, key);
+      if (cached && cached.data && !isStale(cached, 60 * 60 * 1000)) return json(200, cached.data, 'private, max-age=300');
+      try {
+        const r = 0.018;
+        const bbox = (lat - r) + ',' + (lon - r * 1.25) + ',' + (lat + r) + ',' + (lon + r * 1.25);
+        const q = '[out:json][timeout:20];(' + filter.map(function (f) { return 'node[' + f + '](' + bbox + ');'; }).join('') + ');out 80;';
+        const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', signal: AbortSignal.timeout(FETCH_TIMEOUT + 6000), headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: 'data=' + encodeURIComponent(q) });
+        if (!res.ok) throw new Error('http ' + res.status);
+        const j = await res.json();
+        const items = (j.elements || []).map(function (e) {
+          const t = e.tags || {};
+          return { lat: e.lat, lon: e.lon, name: t['brand:en'] || t.brand || t.name || null, km: haversineKm(lat, lon, e.lat, e.lon) };
+        }).filter(function (x) { return x.lat != null && x.lon != null; });
+        items.sort(function (a, b) { return a.km - b.km; });
+        const data = { kind, items: items.slice(0, 40), attribution: 'OpenStreetMap contributors (ODbL)' };
+        await cacheSet(ctx, key, data);
+        return json(200, data, 'private, max-age=300');
+      } catch (e) { return json(200, { kind, items: [], error: 'unavailable' }); }
     } },
     // On-demand translator via the keyless MyMemory API (EN/DE <-> JA).
     { method: 'POST', path: '/translate', auth: true, async handler(req, ctx) {
