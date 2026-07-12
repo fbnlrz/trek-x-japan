@@ -161,6 +161,9 @@ This plugin requests the following permissions, each for a specific reason:
 | `db:write:itinerary` | Assigns/unassigns an added place to a day (`ctx.itinerary.assign` / `unassign`). Needs your `day_edit`. |
 | `db:meta` | Pins shared trip tips and tags plugin-created places with a note (`ctx.meta.*`), stored in the plugin's own namespace on the trip/place. |
 | `events:subscribe` | Subscribes to core trip events (`place:created`, `file:created`, `day:updated`, …) to build the **live activity feed**. |
+| `jobs:run` | Persistent, userless scheduling (`ctx.scheduler`) that keeps the FX / earthquake / news caches warm across restarts, so those tabs load instantly. |
+| `notify:send` | Sends you a host push (`ctx.notify.send`) when a spend drops your own IC balance below your low-balance threshold — scoped strictly to you. |
+| `rates:read` | Reads JPY exchange rates from TREK's shared FX broker (`ctx.rates.get`) — no external call when the host provides it; falls back to open.er-api.com otherwise. |
 | `ws:broadcast:trip` | Notifies the trip's TREK clients when the shared board changes (checklist, expenses, prefectures, pinned tips). |
 | `ws:broadcast:user` | Notifies your own TREK clients when your personal IC balance changes. |
 | `hook:place-detail-provider` | Enriches a place's detail panel in the planner with the note the plugin pinned to it (`placeDetailProvider.getDetails`). |
@@ -168,9 +171,10 @@ This plugin requests the following permissions, each for a specific reason:
 | `hook:map-marker-provider` | Puts curated Japan spots, practical POIs (foreign-card ATMs, coin lockers, luggage forwarding) and the official designated smoking areas onto the trip map (`mapMarkerProvider.getMarkers`). The full ~1,300-area / ~3,500-venue smoking set is served location-aware on the Essentials tab instead, to avoid flooding the map. |
 | `hook:trip-card-provider` | Adds a countdown badge to the trip's card on the TREK dashboard (`tripCardProvider.getCards`). |
 | `hook:pdf-section-provider` | Adds a Japan section (emergency numbers & phrases, prep-checklist status, budget) to the exported trip PDF (`pdfSectionProvider.getSections`). |
+| `hook:user-data` | GDPR: when a TREK account is deleted, drops everything personal the plugin holds about it and de-attributes shared board rows (`deleteUserData`); exports that data on request (`exportUserData`). |
 | `http:outbound` | Base marker declaring outbound HTTP. On its own it reaches no host — the specific hosts below are what open. |
 | `http:outbound:api.open-meteo.com` | Current weather and the 5-day forecast for the trip's weather location (Open-Meteo, no API key). |
-| `http:outbound:open.er-api.com` | JPY exchange rates for the live yen ⇄ home-currency conversion (open.er-api.com, no API key). |
+| `http:outbound:open.er-api.com` | JPY exchange-rate **fallback** for the live yen ⇄ home-currency conversion, used only when the host FX broker (`rates:read`) is unavailable (open.er-api.com, no API key). |
 | `http:outbound:www.jma.go.jp` | The recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
 | `http:outbound:japantoday.com` | Latest English-language Japan news headlines on the Safety tab (Japan Today national RSS feed, no API key). |
 | `http:outbound:api.mymemory.translated.net` | On-demand EN/DE ⇄ Japanese translation for the phrasebook's translator (MyMemory API, no API key). |

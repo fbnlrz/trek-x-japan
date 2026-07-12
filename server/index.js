@@ -192,7 +192,16 @@ async function refreshNews(ctx) {
   }
   const data = { items }; return { data, fetched_at: await cacheSet(ctx, 'news', data) };
 }
-async function refreshFx(ctx) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); const rates = (raw && raw.rates) || {}; const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) }; return { data, fetched_at: await cacheSet(ctx, 'fx', data) }; }
+async function refreshFx(ctx) {
+  // Prefer the host FX broker (rates:read, no egress, cached upstream); fall back
+  // to the direct er-api call so this keeps working on hosts without the broker.
+  let rates = null, source = null;
+  const br = await attempt(function () { return ctx.rates && ctx.rates.get ? ctx.rates.get('JPY') : null; });
+  if (br.ok && br.value && typeof br.value === 'object') { rates = br.value; source = 'host'; }
+  if (!rates) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); rates = (raw && raw.rates) || {}; source = raw && (raw.time_last_update_utc || null); }
+  const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: source };
+  return { data, fetched_at: await cacheSet(ctx, 'fx', data) };
+}
 async function refreshWeather(ctx, lat, lon, key) {
   const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
   const raw = await timedFetch(url);
@@ -254,6 +263,22 @@ async function icAdjust(req, ctx, kind) {
   await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, next, at);
   await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, kind, amount, next, at);
   await safeBroadcastUser(ctx, userId, 'ic:changed', { yen: next });
+  // (≥3.3) Proactive host notification (notify:send) when a spend drops your own
+  // IC balance below your threshold — so you top up before the next gate. Scope is
+  // forced to the acting user; fail-safe on hosts without the broker.
+  if (kind === 'spend') {
+    const prefs = await loadUserPrefs(ctx, userId);
+    const threshold = Math.round(toNum(prefs.low_ic_threshold, 1000));
+    if (threshold > 0 && next < threshold && (next + amount) >= threshold) {
+      await attempt(function () {
+        return ctx.notify && ctx.notify.send({
+          title: (prefs.ic_card || 'IC') + ' balance low',
+          body: 'Your ' + (prefs.ic_card || 'IC card') + ' is down to ¥' + next.toLocaleString('en-US') + '. Top up at a konbini or station machine before your next ride.',
+          scope: 'user', targetId: userId,
+        });
+      });
+    }
+  }
   return json(200, { yen: next, kind, amount });
 }
 
@@ -290,10 +315,60 @@ const PLUGIN = {
     await ctx.db.migrate('u004_ic_balance', 'CREATE TABLE IF NOT EXISTS ic_balance (user_id INTEGER PRIMARY KEY, yen INTEGER NOT NULL DEFAULT 0, updated_at TEXT)');
     await ctx.db.migrate('u005_ic_ledger', 'CREATE TABLE IF NOT EXISTS ic_ledger (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, balance_after INTEGER NOT NULL, at TEXT)');
     await ctx.db.migrate('g001_cache', 'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, json TEXT, fetched_at TEXT)');
-    ctx.log.info('TREK x Japan (trip-page, 3.2.1) loaded');
+    // (≥3.3) Persistent, userless scheduling (jobs:run). This is the reliable way
+    // to keep FX / earthquake / news caches warm — `jobs[]` are not guaranteed to
+    // fire on every host. Upsert-by-name, so re-arming on each load is idempotent.
+    // Fail-safe: a host without ctx.scheduler simply serves caches on demand.
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(6 * 60 * 60 * 1000, 'fx'); });
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(15 * 60 * 1000, 'quake'); });
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(30 * 60 * 1000, 'news'); });
+    ctx.log.info('TREK x Japan (trip-page) loaded');
   },
 
   async onUnload(ctx) { ctx.log.info('TREK x Japan unloading'); },
+
+  // (≥3.3) Persistent scheduler callback (jobs:run) — userless, like a job. Keeps
+  // the shared caches warm so weather/quake/news are instant when someone opens
+  // the tab. Named timers map 1:1 to the refreshers.
+  async scheduled(input, ctx) {
+    const name = input && input.name;
+    try {
+      if (name === 'fx') await refreshFx(ctx);
+      else if (name === 'quake') await refreshQuake(ctx);
+      else if (name === 'news') await refreshNews(ctx);
+    } catch (e) { ctx.log.warn('scheduled ' + name, { msg: String(e && e.message) }); }
+  },
+
+  // (≥3.3) GDPR erasure (hook:user-data) — a TREK account was deleted; drop
+  // everything personal we hold about it from our OWN db. Userless, idempotent
+  // (the host retries until it succeeds). Shared trip content is left intact but
+  // de-attributed so no deleted user stays named on a board.
+  async deleteUserData(input, ctx) {
+    const id = toNum(input && input.userId, null); if (id == null) return;
+    const personal = ['user_prefs', 'phrase_favs', 'phrase_state', 'ic_balance', 'ic_ledger'];
+    for (const t of personal) { await attempt(function () { return ctx.db.exec('DELETE FROM ' + t + ' WHERE user_id = ?', id); }); }
+    const attributed = ['checklist', 'visited_prefs', 'collect', 'pinned_tips', 'place_notes', 'transport_legs'];
+    for (const t of attributed) { await attempt(function () { return ctx.db.exec('UPDATE ' + t + ' SET by_user = NULL WHERE by_user = ?', id); }); }
+    ctx.log.info('deleteUserData done', { userId: id });
+  },
+
+  // (≥3.3) GDPR portability (hook:user-data) — return everything we hold about a
+  // user from our own db, as a JSON-serialisable value the host aggregates.
+  async exportUserData(input, ctx) {
+    const id = toNum(input && input.userId, null); const out = { plugin: 'trek-x-japan' };
+    if (id == null) return out;
+    const q = async function (label, sql) { const r = await attempt(function () { return ctx.db.query(sql, id); }); out[label] = r.ok ? r.value : []; };
+    await q('preferences', 'SELECT key, value FROM user_prefs WHERE user_id = ?');
+    await q('phrase_favorites', 'SELECT phrase_id, at FROM phrase_favs WHERE user_id = ?');
+    await q('phrase_state', 'SELECT offset FROM phrase_state WHERE user_id = ?');
+    await q('ic_balance', 'SELECT yen, updated_at FROM ic_balance WHERE user_id = ?');
+    await q('ic_ledger', 'SELECT kind, amount, balance_after, at FROM ic_ledger WHERE user_id = ? ORDER BY id');
+    await q('checklist_items_done', 'SELECT trip_id, item_id, at FROM checklist WHERE by_user = ?');
+    await q('prefectures_stamped', 'SELECT trip_id, code, at FROM visited_prefs WHERE by_user = ?');
+    await q('collections', 'SELECT trip_id, kind, key, at FROM collect WHERE by_user = ?');
+    await q('expenses', 'SELECT trip_id, amount_yen, note, at FROM spend WHERE user_id = ?');
+    return out;
+  },
 
   // (≥3.2.1) WIRED reactive hook. No user, only { event, tripId }. We keep a
   // per-trip activity feed the UI polls via GET /activity.
