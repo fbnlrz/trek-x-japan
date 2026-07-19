@@ -27,6 +27,9 @@ const CITIES = require('./data/cities.json');
 const TRANSPORT = require('./data/transport.json');
 const SPOTS = require('./data/spots.json');
 const DISHES = require('./data/dishes.json');
+const POI = require('./data/poi.json');
+const SMOKING = require('./data/smoking.json'); // ~1300 designated smoking areas — OpenStreetMap (ODbL) + Tokyo Open Data 台東区 (CC BY 4.0)
+const SMOKING_VENUES = require('./data/smoking_venues.json'); // ~3500 venues that permit indoor smoking (cafés/izakaya) — OpenStreetMap (ODbL)
 
 const CHECKLIST_ITEMS = [
   { id: 'jr_pass', en: 'JR Pass ordered / activated', de: 'JR Pass bestellt / aktiviert', group: 'docs' },
@@ -163,6 +166,10 @@ function normReservation(x) {
 }
 
 // remote refreshers
+function haversineKm(aLat, aLon, bLat, bLon) { const R = 6371, r = Math.PI / 180; const dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r; const s = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); }
+// Live "near me" categories that are too dense to bundle (konbini alone ~56k) —
+// fetched on demand from OpenStreetMap via Overpass around the user's location.
+const OVERPASS_FILTERS = { konbini: ['"amenity"="convenience"'], atm: ['"amenity"="atm"'], pharmacy: ['"amenity"="pharmacy"'], vending: ['"amenity"="vending_machine"'] };
 async function timedFetch(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/json' } }); if (!res.ok) throw new Error('http ' + res.status); return res.json(); }
 async function timedFetchText(url) { const res = await fetch(url, { signal: AbortSignal.timeout(FETCH_TIMEOUT), headers: { accept: 'application/rss+xml, application/xml, text/xml, */*' } }); if (!res.ok) throw new Error('http ' + res.status); return res.text(); }
 // Minimal RSS reader: pull a tag's text out of an <item> block, unwrap CDATA,
@@ -185,7 +192,16 @@ async function refreshNews(ctx) {
   }
   const data = { items }; return { data, fetched_at: await cacheSet(ctx, 'news', data) };
 }
-async function refreshFx(ctx) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); const rates = (raw && raw.rates) || {}; const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: raw && (raw.time_last_update_utc || null) }; return { data, fetched_at: await cacheSet(ctx, 'fx', data) }; }
+async function refreshFx(ctx) {
+  // Prefer the host FX broker (rates:read, no egress, cached upstream); fall back
+  // to the direct er-api call so this keeps working on hosts without the broker.
+  let rates = null, source = null;
+  const br = await attempt(function () { return ctx.rates && ctx.rates.get ? ctx.rates.get('JPY') : null; });
+  if (br.ok && br.value && typeof br.value === 'object') { rates = br.value; source = 'host'; }
+  if (!rates) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); rates = (raw && raw.rates) || {}; source = raw && (raw.time_last_update_utc || null); }
+  const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: source };
+  return { data, fetched_at: await cacheSet(ctx, 'fx', data) };
+}
 async function refreshWeather(ctx, lat, lon, key) {
   const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
   const raw = await timedFetch(url);
@@ -247,6 +263,22 @@ async function icAdjust(req, ctx, kind) {
   await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, next, at);
   await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, kind, amount, next, at);
   await safeBroadcastUser(ctx, userId, 'ic:changed', { yen: next });
+  // (≥3.3) Proactive host notification (notify:send) when a spend drops your own
+  // IC balance below your threshold — so you top up before the next gate. Scope is
+  // forced to the acting user; fail-safe on hosts without the broker.
+  if (kind === 'spend') {
+    const prefs = await loadUserPrefs(ctx, userId);
+    const threshold = Math.round(toNum(prefs.low_ic_threshold, 1000));
+    if (threshold > 0 && next < threshold && (next + amount) >= threshold) {
+      await attempt(function () {
+        return ctx.notify && ctx.notify.send({
+          title: (prefs.ic_card || 'IC') + ' balance low',
+          body: 'Your ' + (prefs.ic_card || 'IC card') + ' is down to ¥' + next.toLocaleString('en-US') + '. Top up at a konbini or station machine before your next ride.',
+          scope: 'user', targetId: userId,
+        });
+      });
+    }
+  }
   return json(200, { yen: next, kind, amount });
 }
 
@@ -283,10 +315,60 @@ const PLUGIN = {
     await ctx.db.migrate('u004_ic_balance', 'CREATE TABLE IF NOT EXISTS ic_balance (user_id INTEGER PRIMARY KEY, yen INTEGER NOT NULL DEFAULT 0, updated_at TEXT)');
     await ctx.db.migrate('u005_ic_ledger', 'CREATE TABLE IF NOT EXISTS ic_ledger (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, balance_after INTEGER NOT NULL, at TEXT)');
     await ctx.db.migrate('g001_cache', 'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, json TEXT, fetched_at TEXT)');
-    ctx.log.info('TREK x Japan (trip-page, 3.2.1) loaded');
+    // (≥3.3) Persistent, userless scheduling (jobs:run). This is the reliable way
+    // to keep FX / earthquake / news caches warm — `jobs[]` are not guaranteed to
+    // fire on every host. Upsert-by-name, so re-arming on each load is idempotent.
+    // Fail-safe: a host without ctx.scheduler simply serves caches on demand.
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(6 * 60 * 60 * 1000, 'fx'); });
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(15 * 60 * 1000, 'quake'); });
+    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(30 * 60 * 1000, 'news'); });
+    ctx.log.info('TREK x Japan (trip-page) loaded');
   },
 
   async onUnload(ctx) { ctx.log.info('TREK x Japan unloading'); },
+
+  // (≥3.3) Persistent scheduler callback (jobs:run) — userless, like a job. Keeps
+  // the shared caches warm so weather/quake/news are instant when someone opens
+  // the tab. Named timers map 1:1 to the refreshers.
+  async scheduled(input, ctx) {
+    const name = input && input.name;
+    try {
+      if (name === 'fx') await refreshFx(ctx);
+      else if (name === 'quake') await refreshQuake(ctx);
+      else if (name === 'news') await refreshNews(ctx);
+    } catch (e) { ctx.log.warn('scheduled ' + name, { msg: String(e && e.message) }); }
+  },
+
+  // (≥3.3) GDPR erasure (hook:user-data) — a TREK account was deleted; drop
+  // everything personal we hold about it from our OWN db. Userless, idempotent
+  // (the host retries until it succeeds). Shared trip content is left intact but
+  // de-attributed so no deleted user stays named on a board.
+  async deleteUserData(input, ctx) {
+    const id = toNum(input && input.userId, null); if (id == null) return;
+    const personal = ['user_prefs', 'phrase_favs', 'phrase_state', 'ic_balance', 'ic_ledger'];
+    for (const t of personal) { await attempt(function () { return ctx.db.exec('DELETE FROM ' + t + ' WHERE user_id = ?', id); }); }
+    const attributed = ['checklist', 'visited_prefs', 'collect', 'pinned_tips', 'place_notes', 'transport_legs'];
+    for (const t of attributed) { await attempt(function () { return ctx.db.exec('UPDATE ' + t + ' SET by_user = NULL WHERE by_user = ?', id); }); }
+    ctx.log.info('deleteUserData done', { userId: id });
+  },
+
+  // (≥3.3) GDPR portability (hook:user-data) — return everything we hold about a
+  // user from our own db, as a JSON-serialisable value the host aggregates.
+  async exportUserData(input, ctx) {
+    const id = toNum(input && input.userId, null); const out = { plugin: 'trek-x-japan' };
+    if (id == null) return out;
+    const q = async function (label, sql) { const r = await attempt(function () { return ctx.db.query(sql, id); }); out[label] = r.ok ? r.value : []; };
+    await q('preferences', 'SELECT key, value FROM user_prefs WHERE user_id = ?');
+    await q('phrase_favorites', 'SELECT phrase_id, at FROM phrase_favs WHERE user_id = ?');
+    await q('phrase_state', 'SELECT offset FROM phrase_state WHERE user_id = ?');
+    await q('ic_balance', 'SELECT yen, updated_at FROM ic_balance WHERE user_id = ?');
+    await q('ic_ledger', 'SELECT kind, amount, balance_after, at FROM ic_ledger WHERE user_id = ? ORDER BY id');
+    await q('checklist_items_done', 'SELECT trip_id, item_id, at FROM checklist WHERE by_user = ?');
+    await q('prefectures_stamped', 'SELECT trip_id, code, at FROM visited_prefs WHERE by_user = ?');
+    await q('collections', 'SELECT trip_id, kind, key, at FROM collect WHERE by_user = ?');
+    await q('expenses', 'SELECT trip_id, amount_yen, note, at FROM spend WHERE user_id = ?');
+    return out;
+  },
 
   // (≥3.2.1) WIRED reactive hook. No user, only { event, tripId }. We keep a
   // per-trip activity feed the UI polls via GET /activity.
@@ -350,6 +432,69 @@ const PLUGIN = {
           }
         } catch (e) { ctx.log.warn('warnings', { msg: String(e && e.message) }); }
         return out;
+      },
+    },
+    // (3.3.x) Contribute markers to the trip map: curated spots + practical POIs
+    // (smoking areas, foreign-card ATMs, lockers, luggage forwarding). Userless.
+    mapMarkerProvider: {
+      async getMarkers(tripId, ctx) {
+        const out = [];
+        try {
+          SPOTS.forEach(function (s) { if (s.lat != null && s.lon != null) out.push({ id: 'spot-' + s.key, lat: s.lat, lng: s.lon, label: s.name, popupText: (s.city ? s.city + ' — ' : '') + s.en }); });
+          POI.forEach(function (p) { if (p.lat != null && p.lon != null) out.push({ id: 'poi-' + p.key, lat: p.lat, lng: p.lon, label: p.name, popupText: p.en }); });
+          // Only the authoritative (official 台東区) smoking areas go on the trip
+          // map — the full ~1300-area / ~3500-venue set is far too dense to pin and
+          // is served location-aware (nearest-first) via the Essentials tab instead.
+          SMOKING.forEach(function (s, i) { if (s.official) out.push({ id: 'smk-' + i, lat: s.lat, lng: s.lon, label: s.name || 'Smoking area', popupText: 'Designated smoking area' + (s.near ? ' · ' + s.near : '') }); });
+        } catch (_) {}
+        return out;
+      },
+    },
+    // (3.3.x) Badge on the trip's dashboard card: countdown from cached dates.
+    tripCardProvider: {
+      async getCards(tripIds, ctx) {
+        const out = [];
+        try {
+          const ids = Array.isArray(tripIds) ? tripIds : [];
+          for (const rawId of ids) {
+            const id = toNum(rawId, null); if (id == null) continue;
+            const tc = await ctx.db.query('SELECT start, end FROM trip_cache WHERE trip_id = ?', id);
+            if (!tc.length) continue;
+            const d = daysUntil(tc[0].start), dEnd = daysUntil(tc[0].end);
+            let val = null;
+            if (d != null && d > 0) val = d + ' day' + (d === 1 ? '' : 's') + ' to go';
+            else if (d === 0) val = 'Departure day';
+            else if (dEnd != null && dEnd >= 0) val = 'In Japan · ' + dEnd + ' left';
+            if (val) out.push({ tripId: id, id: 'trek-japan', label: 'TREK × Japan', value: val });
+          }
+        } catch (_) {}
+        return out;
+      },
+    },
+    // (3.3.x) Add a Japan section to the exported trip PDF: emergency numbers &
+    // phrases, prep-checklist status and the shared budget. Userless.
+    pdfSectionProvider: {
+      async getSections(tripId, ctx) {
+        const id = toNum(tripId, null); const sections = [];
+        try {
+          const emg = PHRASES.filter(function (p) { return p.category === EMERGENCY_PHRASE_CATEGORY; }).slice(0, 8);
+          sections.push({
+            title: 'TREK x Japan — Emergency',
+            paragraphs: ['Police 110  ·  Fire / Ambulance 119', 'Show the Japanese phrase if you need help.'],
+            table: { headers: ['English', 'Japanese', 'Romaji'], rows: emg.map(function (p) { return [p.en, p.jp, p.romaji]; }) },
+          });
+          if (id != null) {
+            const cl = await ctx.db.query('SELECT COALESCE(SUM(done),0) AS d FROM checklist WHERE trip_id = ?', id);
+            const done = cl.length ? cl[0].d : 0, total = CHECKLIST_ITEMS.length;
+            sections.push({ title: 'TREK x Japan — Prep checklist', paragraphs: [done + ' of ' + total + ' items done.'], table: { headers: ['Item'], rows: CHECKLIST_ITEMS.map(function (i) { return [i.en]; }) } });
+            const b = await ctx.db.query('SELECT planned_yen FROM budget WHERE trip_id = ?', id);
+            const planned = b.length ? b[0].planned_yen : 0;
+            const sp = await ctx.db.query('SELECT COALESCE(SUM(amount_yen),0) AS s FROM spend WHERE trip_id = ?', id);
+            const spent = sp.length ? sp[0].s : 0;
+            if (planned > 0 || spent > 0) sections.push({ title: 'TREK x Japan — Budget', paragraphs: ['Planned: JPY ' + planned.toLocaleString('en-US'), 'Spent: JPY ' + spent.toLocaleString('en-US'), 'Remaining: JPY ' + (planned - spent).toLocaleString('en-US')] });
+          }
+        } catch (_) {}
+        return sections;
       },
     },
   },
@@ -821,6 +966,66 @@ const PLUGIN = {
       const cats = [];
       DISHES.forEach(function (dsh) { if (cats.indexOf(dsh.cat) < 0) cats.push(dsh.cat); });
       return json(200, { cats, dishes: DISHES });
+    } },
+    // ---- Essentials: konbini chains, ATMs, lockers, luggage, drugstores … -----
+    { method: 'GET', path: '/poi', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const cats = [];
+      POI.forEach(function (p) { if (cats.indexOf(p.cat) < 0) cats.push(p.cat); });
+      return json(200, { cats, poi: POI });
+    } },
+    // ---- Smoking: every designated smoking AREA + every indoor smoking-OK VENUE
+    // in Japan (bundled). kind=venue switches to cafés/izakaya that still permit
+    // smoking after the 2020 indoor ban. lat/lon → nearest-first with distances.
+    { method: 'GET', path: '/smoking', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const kind = String((req.query && req.query.kind) || 'area') === 'venue' ? 'venue' : 'area';
+      const DATA = kind === 'venue' ? SMOKING_VENUES : SMOKING;
+      const lat = toNum(req.query && req.query.lat, null), lon = toNum(req.query && req.query.lon, null);
+      const cityCounts = {};
+      DATA.forEach(function (s) { if (s.near) cityCounts[s.near] = (cityCounts[s.near] || 0) + 1; });
+      const cities = Object.keys(cityCounts).map(function (n) { return { name: n, n: cityCounts[n] }; }).sort(function (a, b) { return b.n - a.n; });
+      const attribution = kind === 'venue'
+        ? 'OpenStreetMap contributors (ODbL)'
+        : 'OpenStreetMap contributors (ODbL) · Tokyo Open Data 台東区 (CC BY 4.0)';
+      if (lat != null && lon != null) {
+        const withD = DATA.map(function (s) { return { lat: s.lat, lon: s.lon, name: s.name || null, en: s.en || null, near: s.near || null, type: s.type || null, smk: s.smk || null, official: !!s.official, hours: s.hours || null, km: haversineKm(lat, lon, s.lat, s.lon) }; });
+        withD.sort(function (a, b) { return a.km - b.km; });
+        return json(200, { kind, count: DATA.length, cities, nearest: withD.slice(0, 60), attribution });
+      }
+      // Venues (~3500) are too large to ship whole — return city counts only and
+      // let the client fetch nearest-first once it has a location. Areas (~1300)
+      // are light enough to bundle so nearest is instant on "use my location".
+      if (kind === 'venue') return json(200, { kind, count: DATA.length, cities, points: [], attribution });
+      return json(200, { kind, count: DATA.length, cities, points: DATA, attribution });
+    } },
+    // ---- Nearby (live): konbini / ATMs / pharmacies around a point (Overpass) --
+    { method: 'GET', path: '/nearby', auth: true, async handler(req, ctx) {
+      await requireTrip(req, ctx);
+      const lat = toNum(req.query && req.query.lat, null), lon = toNum(req.query && req.query.lon, null);
+      const kind = String((req.query && req.query.kind) || 'konbini');
+      const filter = OVERPASS_FILTERS[kind];
+      if (lat == null || lon == null) return json(400, { error: 'lat/lon required' });
+      if (!filter) return json(400, { error: 'unknown kind' });
+      const key = 'nearby:' + kind + ':' + lat.toFixed(3) + ',' + lon.toFixed(3);
+      const cached = await cacheGet(ctx, key);
+      if (cached && cached.data && !isStale(cached, 60 * 60 * 1000)) return json(200, cached.data, 'private, max-age=300');
+      try {
+        const r = 0.018;
+        const bbox = (lat - r) + ',' + (lon - r * 1.25) + ',' + (lat + r) + ',' + (lon + r * 1.25);
+        const q = '[out:json][timeout:20];(' + filter.map(function (f) { return 'node[' + f + '](' + bbox + ');'; }).join('') + ');out 80;';
+        const res = await fetch('https://overpass-api.de/api/interpreter', { method: 'POST', signal: AbortSignal.timeout(FETCH_TIMEOUT + 6000), headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json' }, body: 'data=' + encodeURIComponent(q) });
+        if (!res.ok) throw new Error('http ' + res.status);
+        const j = await res.json();
+        const items = (j.elements || []).map(function (e) {
+          const t = e.tags || {};
+          return { lat: e.lat, lon: e.lon, name: t['brand:en'] || t.brand || t.name || null, km: haversineKm(lat, lon, e.lat, e.lon) };
+        }).filter(function (x) { return x.lat != null && x.lon != null; });
+        items.sort(function (a, b) { return a.km - b.km; });
+        const data = { kind, items: items.slice(0, 40), attribution: 'OpenStreetMap contributors (ODbL)' };
+        await cacheSet(ctx, key, data);
+        return json(200, data, 'private, max-age=300');
+      } catch (e) { return json(200, { kind, items: [], error: 'unavailable' }); }
     } },
     // On-demand translator via the keyless MyMemory API (EN/DE <-> JA).
     { method: 'POST', path: '/translate', auth: true, async handler(req, ctx) {

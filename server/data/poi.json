@@ -1,0 +1,21 @@
+[
+  { "key": "atm-711", "cat": "atm", "name": "7-Bank ATM (7-Eleven)", "city": null, "lat": null, "lon": null, "en": "In every 7-Eleven — takes foreign Visa/Mastercard/Maestro, 24h, English menu.", "de": "In jedem 7-Eleven — akzeptiert ausländische Visa/Mastercard/Maestro, 24h, engl. Menü." },
+  { "key": "atm-jppost", "cat": "atm", "name": "Japan Post Bank ATM", "city": null, "lat": null, "lon": null, "en": "At post offices — also accepts most foreign cards; wide coverage.", "de": "In Postämtern — akzeptiert ebenfalls die meisten ausländischen Karten; große Abdeckung." },
+  { "key": "atm-aeon", "cat": "atm", "name": "AEON Bank ATM", "city": null, "lat": null, "lon": null, "en": "In AEON malls & Ministop — foreign-card friendly, often fee-free.", "de": "In AEON-Malls & Ministop — kartenfreundlich, oft gebührenfrei." },
+
+  { "key": "lck-tokyo", "cat": "locker", "name": "Coin lockers — Tokyo Station", "city": "Tokyo", "lat": 35.6812, "lon": 139.7671, "en": "Large coin-locker banks; pay by IC card. Fill up fast at peak times.", "de": "Große Schließfachanlagen; Zahlung per IC-Karte. Zu Stoßzeiten schnell voll." },
+  { "key": "lck-shinjuku", "cat": "locker", "name": "Coin lockers — Shinjuku Station", "city": "Tokyo", "lat": 35.6896, "lon": 139.7004, "en": "Lockers throughout Shinjuku Station; IC-card payment.", "de": "Schließfächer in der ganzen Shinjuku-Station; IC-Karten-Zahlung." },
+  { "key": "lck-kyoto", "cat": "locker", "name": "Coin lockers — Kyoto Station", "city": "Kyoto", "lat": 34.9858, "lon": 135.7588, "en": "Big locker area near the central gate.", "de": "Großer Schließfachbereich nahe dem Zentraltor." },
+
+  { "key": "lug-narita", "cat": "luggage", "name": "Yamato luggage forwarding — Narita", "city": "Tokyo", "lat": 35.7647, "lon": 140.3863, "en": "Takkyubin counter: send bags airport → hotel (usually next day).", "de": "Takkyubin-Schalter: Gepäck Flughafen → Hotel senden (meist am nächsten Tag)." },
+  { "key": "lug-kansai", "cat": "luggage", "name": "Yamato luggage forwarding — Kansai Airport", "city": "Osaka", "lat": 34.4340, "lon": 135.2440, "en": "Forward bags KIX → hotel so you travel light.", "de": "Gepäck KIX → Hotel senden, um leicht zu reisen." },
+
+  { "key": "dr-donki-shibuya", "cat": "drugstore", "name": "Don Quijote Shibuya (24h)", "city": "Tokyo", "lat": 35.6595, "lon": 139.6985, "en": "24-hour discount + drugstore, tax-free, everything under one roof.", "de": "24h Discount + Drogerie, Tax-Free, alles unter einem Dach." },
+  { "key": "dr-matsukiyo", "cat": "drugstore", "name": "Matsumoto Kiyoshi", "city": null, "lat": null, "lon": null, "en": "Drugstore chain — meds, cosmetics, tax-free; branches everywhere.", "de": "Drogerie-Kette — Medikamente, Kosmetik, Tax-Free; überall Filialen." },
+
+  { "key": "kon-711", "cat": "konbini", "name": "7-Eleven", "city": null, "lat": null, "lon": null, "en": "7-Bank ATM (foreign cards), pay bills/tickets, onigiri & oden, free Wi-Fi.", "de": "7-Bank-ATM (ausländische Karten), Rechnungen/Tickets, Onigiri & Oden, Gratis-WLAN." },
+  { "key": "kon-familymart", "cat": "konbini", "name": "FamilyMart", "city": null, "lat": null, "lon": null, "en": "Famichiki fried chicken, Famima ATM, ticket machine, hot snacks.", "de": "Famichiki-Hähnchen, Famima-ATM, Ticketautomat, warme Snacks." },
+  { "key": "kon-lawson", "cat": "konbini", "name": "Lawson", "city": null, "lat": null, "lon": null, "en": "Karaage-kun, Loppi ticket kiosk, Uchi Café sweets, Natural Lawson.", "de": "Karaage-kun, Loppi-Ticketkiosk, Uchi-Café-Süßes, Natural Lawson." },
+
+  { "key": "wifi-jp", "cat": "wifi", "name": "Free Wi-Fi", "city": null, "lat": null, "lon": null, "en": "Konbini, stations and many cafés offer free Wi-Fi; the 'Japan Wi-Fi auto-connect' app links many spots.", "de": "Konbini, Bahnhöfe und viele Cafés bieten Gratis-WLAN; die App 'Japan Wi-Fi auto-connect' verbindet viele Spots." }
+]

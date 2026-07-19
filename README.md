@@ -45,6 +45,13 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Tax-Free** *(calculator)* — work out the consumption-tax refund on a purchase
   (10% general / 8% consumables), with the ¥5,000 minimum, consumables cap and a
   list of popular tax-free stores.
+- **Essentials** *(location-aware)* — a finder for what you need on the ground:
+  **every designated smoking area in Japan** (~1,300, OpenStreetMap + Tokyo Open
+  Data) *and* **~3,500 cafés & izakaya that still permit indoor smoking** after the
+  2020 ban — each with the **nearest to you and walking directions**, plus **live**
+  konbini / ATM / pharmacy lookups around your location (Overpass), coin lockers,
+  luggage forwarding and the konbini chain guide. Uses your device location,
+  falling back to the trip location.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -58,15 +65,19 @@ Data is either **shared** with the whole trip or **personal** to you:
   from the JMA feed, the latest **English-language Japan news** headlines, and
   quick-access emergency phrases.
 
-**Deep TREK 3.2.1 integration.** Beyond its own shared board, the hub plugs into
+**Deep TREK integration.** Beyond its own shared board, the hub plugs into
 the trip planner itself: it reads the trip's **native packing list** and
 **files**, mirrors expenses into TREK's **native budget** (Costs addon) and reads
-them back, turns a matsuri or city into a **planner place** (creating days and
+them back, turns a matsuri, spot or POI into a **planner place** (creating days and
 assignments), pins shared tips and place notes via **trip meta**, enriches a
 place's **detail panel** and raises **planner warnings** (no weather set, budget
 exceeded, Golden Week / New Year / Obon crowding), keeps a **live activity feed**
-from core trip events, and broadcasts changes to other TREK clients. Every one of
-these degrades gracefully when an addon or edit-permission is missing.
+from core trip events, and broadcasts changes to other TREK clients. On TREK
+**3.3+** it also contributes natively: curated spots and practical POIs as
+**map markers**, a countdown **badge on the dashboard trip card**, and a Japan
+**section in the exported trip PDF** (emergency numbers & phrases, prep status,
+budget). Every one of these degrades gracefully on older hosts or when an addon
+or edit-permission is missing.
 
 Everything is local-first: the datasets ship inside the plugin and all state
 lives in the plugin's own database. Network calls are limited to three free,
@@ -160,9 +171,21 @@ This plugin requests the following permissions, each for a specific reason:
 | `http:outbound:www.jma.go.jp` | The recent-earthquake list from the Japan Meteorological Agency (`www.jma.go.jp/bosai/quake/data/list.json`, no API key). |
 | `http:outbound:japantoday.com` | Latest English-language Japan news headlines on the Safety tab (Japan Today national RSS feed, no API key). |
 | `http:outbound:api.mymemory.translated.net` | On-demand EN/DE ⇄ Japanese translation for the phrasebook's translator (MyMemory API, no API key). |
+| `http:outbound:overpass-api.de` | Live "near me" lookups of konbini, ATMs and pharmacies around your location on the Essentials tab (OpenStreetMap Overpass, no API key). Smoking-area data is bundled, not fetched. |
 
 The native-budget features (`ctx.costs.*`) need TREK's **Costs (budget) addon**
 enabled on the trip; everything else works without it and degrades gracefully.
+
+**Ready for TREK 3.3.x (opt-in, off by default).** The server also ships
+fail-safe integrations that light up on newer hosts once you add the matching
+permissions: trip-map markers (`hook:map-marker-provider`), a dashboard
+countdown badge (`hook:trip-card-provider`), a PDF trip section
+(`hook:pdf-section-provider`), the shared FX broker (`rates:read`), scheduler-
+backed cache refresh (`jobs:run`), a low-IC-balance push (`notify:send`) and
+GDPR export/erase (`hook:user-data`). They are kept **out of the manifest** here
+so the plugin installs cleanly on **TREK 3.2.1**, which rejects any permission it
+doesn't recognise — add them back only on a 3.3.x host.
+
 Each outbound host is declared **both** as an `http:outbound:<host>` permission
 **and** in `egress[]` (identical lists), which is what the runtime network guard
 and the iframe CSP are built from. All three endpoints are free and keyless. This
@@ -187,10 +210,21 @@ to re-approve the plugin.
    shared and show who did what, while your IC card and phrase favourites stay
    personal.
 
+## Data & attribution
+
+Smoking-area/venue locations and the live konbini / ATM / pharmacy lookups come
+from **© OpenStreetMap contributors**, available under the
+[Open Database License (ODbL)](https://www.openstreetmap.org/copyright). The
+official designated smoking areas in Taitō (台東区) additionally come from
+**Tokyo Open Data**, available under
+[CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). All other datasets ship
+inside the plugin.
+
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSE](LICENSE). Plugin code is MIT; bundled OpenStreetMap data is
+ODbL; the Taitō official smoking-area data is Tokyo Open Data (CC BY 4.0).
 
----
 
 [![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF00FF?logo=kofi&logoColor=white)](https://ko-fi.com/fbnlrz) [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-Japan%202027-00FFFF?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fbnlrz)
+

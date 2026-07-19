@@ -292,10 +292,25 @@
   var pending = {}; var reqSeq = 0;
 
   function post(msg) { window.parent.postMessage(msg, '*'); }
+  // Client-side concurrency gate. Each route handler on the plugin fans out to
+  // several host RPC calls (requireTrip alone = getById + trip_cache upsert), and
+  // the host caps a plugin at 16 in-flight RPCs. A page like the dashboard that
+  // fires ~12 routes at once would blow past that cap — the host then refuses the
+  // overflow, surfacing as sporadic 403 (a refused getById) / 500 (a refused
+  // db.query) across unrelated routes. Capping in-flight *routes* here keeps the
+  // downstream RPC fan-out comfortably under the host limit.
+  var MAX_INFLIGHT = 4; var inflight = 0; var queue = [];
+  function pump() {
+    while (inflight < MAX_INFLIGHT && queue.length) {
+      var job = queue.shift(); inflight++;
+      invokeRaw(job.sub, job.method, job.body).then(job.resolve, job.reject)
+        .then(function () { inflight--; pump(); });
+    }
+  }
   // This is a trip-page: tripId is always known from trek:context. Inject it
   // into every call so trip-scoped routes get their (membership-checked) trip;
   // personal routes simply ignore it.
-  function invoke(sub, method, body) {
+  function invokeRaw(sub, method, body) {
     method = method || 'GET';
     if (ctx.tripId != null) {
       if (method === 'GET') sub += (sub.indexOf('?') >= 0 ? '&' : '?') + 'tripId=' + encodeURIComponent(ctx.tripId);
@@ -305,6 +320,12 @@
       var id = 'r' + (++reqSeq);
       pending[id] = { resolve: resolve, reject: reject };
       post({ type: 'trek:invoke', requestId: id, sub: sub, method: method, body: body });
+    });
+  }
+  function invoke(sub, method, body) {
+    return new Promise(function (resolve, reject) {
+      queue.push({ sub: sub, method: method, body: body, resolve: resolve, reject: reject });
+      pump();
     });
   }
   function notify(level, message) { post({ type: 'trek:notify', level: level, message: message }); }
@@ -425,6 +446,7 @@
     tag: '<path d="M20.5 13.5l-7 7a2 2 0 0 1-2.8 0l-6.2-6.2A2 2 0 0 1 4 12.9V5a1 1 0 0 1 1-1h7.9a2 2 0 0 1 1.4.6l6.2 6.2a2 2 0 0 1 0 2.7z"/><circle cx="8.5" cy="8.5" r="1.3"/>',
     globe: '<circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.6 2.6 2.6 15.4 0 18M12 3c-2.6 2.6-2.6 15.4 0 18"/>',
     gauge: '<path d="M4 19a8 8 0 1 1 16 0"/><path d="M12 15l4-4"/><circle cx="12" cy="15" r="1.3"/>',
+    info: '<circle cx="12" cy="12" r="9"/><path d="M12 11v5"/><circle cx="12" cy="8" r="0.6" fill="currentColor"/>',
     plus: '<path d="M12 5v14M5 12h14"/>',
     minus: '<path d="M5 12h14"/>',
     search: '<circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/>',
@@ -522,6 +544,7 @@
     { id: 'taxfree', icon: 'tag', en: 'Tax-Free', de: 'Tax-Free', phase: 'trip' },
     { id: 'ic', icon: 'card', en: 'IC card', de: 'IC-Karte', phase: 'trip' },
     { id: 'food', icon: 'food', en: 'Food', de: 'Food', phase: 'trip' },
+    { id: 'poi', icon: 'info', en: 'Essentials', de: 'Essentials', phase: 'trip' },
     { id: 'passport', icon: 'grid', en: 'Passport', de: 'Passport', phase: 'trip' },
     { id: 'safety', icon: 'shield', en: 'Safety', de: 'Sicherheit', phase: 'trip' },
     // Config
@@ -1030,6 +1053,146 @@
       };
     });
   }
+
+  // ---- Essentials: location-aware finder (smoking bundled; konbini live) --
+  var poiState = { cat: 'smoking', loc: null, smoking: null, poi: null, tripLoc: null };
+  var POI_TABS = [
+    { c: 'smoking', en: 'Smoking areas', de: 'Raucherzonen', mode: 'smoking' },
+    { c: 'venue', en: 'Smoking-OK cafés', de: 'Raucher-Cafés', mode: 'venue' },
+    { c: 'konbini', en: 'Konbini', de: 'Konbini', mode: 'live', kind: 'konbini' },
+    { c: 'atm', en: 'ATMs', de: 'Geldautomaten', mode: 'live', kind: 'atm' },
+    { c: 'pharmacy', en: 'Pharmacies', de: 'Apotheken', mode: 'live', kind: 'pharmacy' },
+    { c: 'locker', en: 'Lockers', de: 'Schließfächer', mode: 'poi' },
+    { c: 'luggage', en: 'Luggage', de: 'Gepäck', mode: 'poi' },
+    { c: 'wifi', en: 'Wi-Fi', de: 'WLAN', mode: 'poi' }
+  ];
+  function distLabel(km) { return km < 1 ? Math.round(km * 1000) + ' m' : km.toFixed(1) + ' km'; }
+  function dirUrl(la, lo) { var o = poiState.loc ? (poiState.loc.lat + ',' + poiState.loc.lon) : ''; return 'https://www.google.com/maps/dir/?api=1' + (o ? '&origin=' + encodeURIComponent(o) : '') + '&destination=' + encodeURIComponent(la + ',' + lo) + '&travelmode=walking'; }
+  SECTIONS.poi = function (panel) {
+    return Promise.all([
+      invoke('/poi', 'GET').catch(function () { return { poi: [] }; }),
+      invoke('/smoking', 'GET').catch(function () { return { count: 0, cities: [], points: [] }; }),
+      invoke('/prefs', 'GET').catch(function () { return {}; })
+    ]).then(function (r) {
+      poiState.poi = r[0] || {}; poiState.smoking = r[1] || {};
+      var tp = (r[2] && r[2].trip_prefs) || {};
+      var la = parseFloat(tp.weather_lat), lo = parseFloat(tp.weather_lon);
+      poiState.tripLoc = (isFinite(la) && isFinite(lo)) ? { lat: la, lon: lo, label: tp.weather_city || T('trip location', 'Reiseort') } : null;
+      if (!poiState.loc && poiState.tripLoc) poiState.loc = poiState.tripLoc;
+      renderPoi(panel);
+    });
+  };
+  function useMyLocation(panel) {
+    if (!navigator.geolocation) { notify('warning', T('Location not available here.', 'Standort hier nicht verfügbar.')); return; }
+    notify('info', T('Locating…', ' Orte…'));
+    navigator.geolocation.getCurrentPosition(function (pos) {
+      poiState.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: T('your location', 'dein Standort'), me: true };
+      renderPoi(panel); reportHeight();
+    }, function () { notify('error', T('Could not get your location — using the trip location.', 'Standort nicht ermittelbar — nutze den Reiseort.')); if (poiState.tripLoc) { poiState.loc = poiState.tripLoc; renderPoi(panel); } },
+    { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
+  }
+  function renderPoi(panel) {
+    var tab = null; POI_TABS.forEach(function (t) { if (t.c === poiState.cat) tab = t; }); if (!tab) { poiState.cat = 'smoking'; tab = POI_TABS[0]; }
+    var chips = POI_TABS.map(function (t) { return '<button class="chip" data-pcat="' + t.c + '" aria-pressed="' + (poiState.cat === t.c ? 'true' : 'false') + '">' + esc(T(t.en, t.de)) + '</button>'; }).join('');
+    var locLabel = poiState.loc ? esc(poiState.loc.label) : T('not set', 'nicht gesetzt');
+    var locBar =
+      '<div class="between" style="margin-bottom:10px;flex-wrap:wrap;gap:8px">' +
+        '<div class="row" style="gap:6px;font-size:12.5px">' + svg('pin') + '<span class="muted">' + T('Near:', 'Nähe:') + '</span> <b>' + locLabel + '</b></div>' +
+        '<button class="btn sec sm" id="poi-loc">' + svg('pin') + ' ' + T('Use my location', 'Meinen Standort nutzen') + '</button>' +
+      '</div>';
+    var body = '<div id="poi-body"><div class="loading"><span class="spinner"></span></div></div>';
+    panel.innerHTML =
+      '<div class="card"><h2>' + svg('info') + T('Essentials', 'Essentials') + '</h2>' +
+        '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Find what you need on the ground — the nearest smoking area with directions, konbini, ATMs, pharmacies, lockers and luggage forwarding.', 'Finde, was du vor Ort brauchst — die nächste Raucherzone mit Route, Konbini, Geldautomaten, Apotheken, Schließfächer und Gepäckversand.') + '</div>' +
+        '<div class="wrap" style="margin-bottom:10px">' + chips + '</div>' + locBar + body + '</div>';
+    panel.querySelectorAll('[data-pcat]').forEach(function (b) { b.onclick = function () { poiState.cat = b.getAttribute('data-pcat'); renderPoi(panel); reportHeight(); }; });
+    var lb = panel.querySelector('#poi-loc'); if (lb) lb.onclick = function () { useMyLocation(panel); };
+    fillPoiBody(panel, tab);
+  }
+  function poiRow(name, sub, la, lo, km) {
+    var geo = la != null && lo != null;
+    return '<div class="listrow" style="align-items:flex-start"><span style="color:var(--text-faint)">' + svg('pin') + '</span>' +
+      '<span style="flex:1;min-width:0"><b>' + esc(name) + '</b>' + (km != null ? ' <span class="faint" style="font-size:11px">· ' + distLabel(km) + '</span>' : '') +
+      (sub ? '<div class="faint" style="font-size:11px">' + esc(sub) + '</div>' : '') + '</span>' +
+      (geo ? '<span class="row" style="gap:6px;flex:none">' +
+        '<button class="iconbtn poi-map" data-la="' + la + '" data-lo="' + lo + '" title="' + T('Maps', 'Karten') + '">' + svg('pin') + '</button>' +
+        '<button class="iconbtn poi-dir" data-la="' + la + '" data-lo="' + lo + '" title="' + T('Directions', 'Route') + '">' + svg('external') + '</button></span>' : '') +
+      '</div>';
+  }
+  function wirePoiRows(el) {
+    el.querySelectorAll('.poi-map').forEach(function (b) { b.onclick = function () { openMaps(b.getAttribute('data-la') + ',' + b.getAttribute('data-lo')); }; });
+    el.querySelectorAll('.poi-dir').forEach(function (b) { b.onclick = function () { openUrl(dirUrl(b.getAttribute('data-la'), b.getAttribute('data-lo'))); }; });
+  }
+  function fillPoiBody(panel, tab) {
+    var body = panel.querySelector('#poi-body'); if (!body) return;
+    var attrib = '<div class="foot" style="margin-top:10px">© OpenStreetMap contributors (ODbL)</div>';
+    if (tab.mode === 'smoking') {
+      var sm = poiState.smoking || {}; var pts = sm.points || [];
+      var head = '<div class="kicker" style="margin-bottom:6px">' + (sm.count || pts.length) + ' ' + T('designated smoking areas in Japan', 'ausgewiesene Raucherzonen in Japan') + '</div>';
+      var rows;
+      if (poiState.loc && pts.length) {
+        var lc = poiState.loc;
+        var withD = pts.map(function (p) { return { p: p, km: haversineC(lc.lat, lc.lon, p.lat, p.lon) }; }).sort(function (a, b) { return a.km - b.km; }).slice(0, 40);
+        rows = withD.map(function (x) { var sub = [x.p.near, x.p.hours, x.p.official ? T('official', 'offiziell') : null].filter(Boolean).join(' · '); return poiRow(x.p.name || T('Smoking area', 'Raucherzone'), sub, x.p.lat, x.p.lon, x.km); }).join('');
+        head = '<div class="banner ok" style="margin-bottom:10px">' + T('Nearest smoking area: ', 'Nächste Raucherzone: ') + '<b>' + distLabel(withD[0].km) + '</b>' + T(' away — tap the arrow for directions.', ' entfernt — Pfeil für Route.') + '</div>' + head;
+      } else {
+        var cities = (sm.cities || []).slice(0, 30);
+        rows = '<div class="wrap" style="margin-bottom:8px">' + cities.map(function (c) { return '<span class="chip static">' + esc(c.name) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
+          '<div class="muted" style="font-size:12.5px">' + T('Tap “Use my location” to get the nearest area with walking directions.', 'Tippe „Meinen Standort nutzen" für die nächste Zone mit Fußweg.') + '</div>';
+      }
+      var smAttrib = sm.attribution ? ('<div class="foot" style="margin-top:10px">© ' + esc(sm.attribution) + '</div>') : attrib;
+      body.innerHTML = head + rows + smAttrib;
+      wirePoiRows(body);
+    } else if (tab.mode === 'venue') {
+      // Indoor smoking-OK cafés/izakaya (post-2020 ban). Too many to bundle, so
+      // fetched nearest-first from the server once a location is known.
+      var smkLabel = function (s) {
+        var m = { separated: T('separate smoking room', 'getrennter Raucherraum'), isolated: T('isolated smoking room', 'abgetrennter Raucherraum'), yes: T('smoking allowed', 'Rauchen erlaubt'), dedicated: T('smoking room', 'Raucherraum'), outside: T('smoking outside', 'Rauchen draußen') };
+        return (s && m[s]) || T('smoking allowed', 'Rauchen erlaubt');
+      };
+      if (!poiState.loc) {
+        body.innerHTML = '<div class="loading"><span class="spinner"></span></div>';
+        invoke('/smoking?kind=venue', 'GET').then(function (d) {
+          var cnt = (d && d.count) || 0, cities = (d && d.cities) || [];
+          body.innerHTML = '<div class="kicker" style="margin-bottom:6px">' + cnt + ' ' + T('cafés & izakaya that still allow smoking', 'Cafés & Izakaya, in denen Rauchen erlaubt ist') + '</div>' +
+            '<div class="wrap" style="margin-bottom:8px">' + cities.slice(0, 30).map(function (c) { return '<span class="chip static">' + esc(c.name) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
+            '<div class="muted" style="font-size:12.5px">' + T('Tap “Use my location” to get the nearest smoking-OK venues with walking directions.', 'Tippe „Meinen Standort nutzen" für die nächsten Raucher-Lokale mit Fußweg.') + '</div>' + attrib;
+          reportHeight();
+        }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">—</div>'; reportHeight(); });
+        return;
+      }
+      body.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Finding nearby…', 'Suche in der Nähe…') + '</div>';
+      var lcv = poiState.loc;
+      invoke('/smoking?kind=venue&lat=' + lcv.lat + '&lon=' + lcv.lon, 'GET').then(function (d) {
+        var near = (d && d.nearest) || [];
+        if (!near.length) { body.innerHTML = '<div class="muted" style="font-size:12.5px">—</div>'; reportHeight(); return; }
+        var head2 = '<div class="banner ok" style="margin-bottom:10px">' + T('Nearest smoking-OK venue: ', 'Nächstes Raucher-Lokal: ') + '<b>' + distLabel(near[0].km) + '</b>' + T(' away — tap the arrow for directions.', ' entfernt — Pfeil für Route.') + '</div>';
+        body.innerHTML = head2 + near.slice(0, 40).map(function (x) {
+          var nm = x.en || x.name || T('Smoking-OK venue', 'Raucher-Lokal');
+          var sub = [x.type, smkLabel(x.smk), x.near].filter(Boolean).join(' · ');
+          return poiRow(nm, sub, x.lat, x.lon, x.km);
+        }).join('') + attrib;
+        wirePoiRows(body); reportHeight();
+      }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Lookup unavailable right now.', 'Suche gerade nicht verfügbar.') + '</div>'; reportHeight(); });
+    } else if (tab.mode === 'live') {
+      if (!poiState.loc) { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Set a location above to find the nearest ', 'Setze oben einen Standort für die nächsten ') + esc(T(tab.en, tab.de)) + '.</div>'; return; }
+      body.innerHTML = '<div class="loading"><span class="spinner"></span>' + T('Finding nearby…', 'Suche in der Nähe…') + '</div>';
+      var lc2 = poiState.loc;
+      invoke('/nearby?kind=' + tab.kind + '&lat=' + lc2.lat + '&lon=' + lc2.lon, 'GET').then(function (d) {
+        var items = (d && d.items) || [];
+        if (!items.length) { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + (d && d.error ? T('Live lookup unavailable right now.', 'Live-Suche gerade nicht verfügbar.') : T('None found within ~2 km.', 'Nichts im Umkreis von ~2 km.')) + '</div>'; reportHeight(); return; }
+        body.innerHTML = '<div class="kicker" style="margin-bottom:6px">' + items.length + ' ' + esc(T(tab.en, tab.de)) + ' ' + T('near you', 'in der Nähe') + '</div>' +
+          items.map(function (x) { return poiRow(x.name || esc(T(tab.en, tab.de)), '', x.lat, x.lon, x.km); }).join('') + attrib;
+        wirePoiRows(body); reportHeight();
+      }).catch(function () { body.innerHTML = '<div class="muted" style="font-size:12.5px">' + T('Live lookup unavailable right now.', 'Live-Suche gerade nicht verfügbar.') + '</div>'; reportHeight(); });
+    } else {
+      var list = ((poiState.poi && poiState.poi.poi) || []).filter(function (p) { return p.cat === tab.c; });
+      body.innerHTML = list.map(function (p) { return poiRow(p.name, T(p.en, p.de), p.lat, p.lon, null) + (p.city ? '' : ''); }).join('') || '<div class="muted" style="font-size:12.5px">—</div>';
+      wirePoiRows(body);
+    }
+    reportHeight();
+  }
+  function haversineC(aLat, aLon, bLat, bLon) { var R = 6371, r = Math.PI / 180; var dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r; var s = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) * Math.sin(dLon / 2); return 2 * R * Math.asin(Math.sqrt(s)); }
 
   // ---- Tax-Free: consumption-tax refund calculator (client-only) ---------
   var taxState = { amount: '', kind: 'general' };
