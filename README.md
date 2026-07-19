@@ -224,3 +224,7 @@ inside the plugin.
 
 MIT — see [LICENSE](LICENSE). Plugin code is MIT; bundled OpenStreetMap data is
 ODbL; the Taitō official smoking-area data is Tokyo Open Data (CC BY 4.0).
+
+
+[![Ko-fi](https://img.shields.io/badge/Ko--fi-Support%20me-FF00FF?logo=kofi&logoColor=white)](https://ko-fi.com/fbnlrz) [![Buy Me A Coffee](https://img.shields.io/badge/Buy%20me%20a%20coffee-Japan%202027-00FFFF?logo=buymeacoffee&logoColor=black)](https://buymeacoffee.com/fbnlrz)
+
