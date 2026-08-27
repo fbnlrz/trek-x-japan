@@ -1,3 +1,4 @@
 plugin.zip
 .trek-dev/
 node_modules/
+package-lock.json

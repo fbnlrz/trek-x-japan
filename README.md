@@ -1,7 +1,7 @@
 # TREK × Japan
 
 A **collaborative, in-trip** hub for a Japan trip. It mounts as a tab **inside a
-TREK trip planner** (a `trip-page`, TREK 3.2.1+), so it is always scoped to the
+TREK trip planner** (a `trip-page`, TREK 4.x), so it is always scoped to the
 open trip — and the planning data is **shared by every trip member**. One person
 sets the budget, another logs an expense, a third stamps a prefecture, and
 everyone sees the same board with **who did what**. Genuinely personal things —
@@ -21,7 +21,10 @@ Data is either **shared** with the whole trip or **personal** to you:
   app, adapters, cash, eSIMs …). Every item shows which member ticked it.
 - **Season & events** *(shared window)* — average sakura and kōyō dates for major
   cities (sorted by bloom date), plus matsuri/hanabi highlighted when they fall
-  inside the trip's dates.
+  inside the trip's dates, and a day-by-day list of the **Japanese public
+  holidays** that land inside your trip (computed properly, including the
+  moving-Monday holidays, both equinoxes, substitute holidays and the
+  Citizens' Holiday that creates Silver Week).
 - **Spots** *(reference + planner)* — a curated catalogue of must-see sights by
   city; tap for Maps or add one straight into the shared trip planner (located).
 - **Transport** *(shared)* — a **JR Pass calculator**: count the intercity legs
@@ -48,10 +51,12 @@ Data is either **shared** with the whole trip or **personal** to you:
 - **Essentials** *(location-aware)* — a finder for what you need on the ground:
   **every designated smoking area in Japan** (~1,300, OpenStreetMap + Tokyo Open
   Data) *and* **~3,500 cafés & izakaya that still permit indoor smoking** after the
-  2020 ban — each with the **nearest to you and walking directions**, plus **live**
-  konbini / ATM / pharmacy lookups around your location (Overpass), coin lockers,
-  luggage forwarding and the konbini chain guide. Uses your device location,
-  falling back to the trip location.
+  2020 ban — each sorted **nearest first with walking directions**, plus **live**
+  konbini / ATM / pharmacy lookups around that point (Overpass), coin lockers,
+  luggage forwarding and the konbini chain guide. Distances are measured from the
+  trip location you set in Settings; the plugin frame is sandboxed at an opaque
+  origin, so browser geolocation is normally unavailable to it and the trip
+  location is what gets used.
 - **IC card (Suica)** *(personal)* — your own balance, charge/spend, a ledger and
   a warning below your threshold. Every traveller has their own card.
 - **Food** *(shared)* — konbini/famichiki/ramen/kaiten/gyoza/matcha counters for
@@ -65,26 +70,33 @@ Data is either **shared** with the whole trip or **personal** to you:
   from the JMA feed, the latest **English-language Japan news** headlines, and
   quick-access emergency phrases.
 
-**Deep TREK integration.** Beyond its own shared board, the hub plugs into
-the trip planner itself: it reads the trip's **native packing list** and
-**files**, mirrors expenses into TREK's **native budget** (Costs addon) and reads
-them back, turns a matsuri, spot or POI into a **planner place** (creating days and
-assignments), pins shared tips and place notes via **trip meta**, enriches a
-place's **detail panel** and raises **planner warnings** (no weather set, budget
-exceeded, Golden Week / New Year / Obon crowding), keeps a **live activity feed**
-from core trip events, and broadcasts changes to other TREK clients. On TREK
-**3.3+** it also contributes natively: curated spots and practical POIs as
-**map markers**, a countdown **badge on the dashboard trip card**, and a Japan
-**section in the exported trip PDF** (emergency numbers & phrases, prep status,
-budget). Every one of these degrades gracefully on older hosts or when an addon
-or edit-permission is missing.
+**Deep TREK integration.** Beyond its own shared board, the hub plugs into the
+trip planner itself. It reads the trip's **native packing list** and **files**,
+mirrors expenses into TREK's **native budget** (Costs addon) and reads them back,
+turns a matsuri, spot or POI into a **planner place** (creating days and
+assignments), pins shared tips and place notes via **trip meta**, and broadcasts
+changes to other TREK clients. It also contributes natively to core surfaces, with
+no iframe of its own:
 
-Everything is local-first: the datasets ship inside the plugin and all state
-lives in the plugin's own database. Network calls are limited to three free,
-keyless endpoints and their results are cached, so the tab renders fast. The UI
-is drawn entirely with inline SVG (no bundled images or web fonts, per TREK's
-sandbox), follows the host's light/dark theme, and speaks English and German off
-the TREK locale.
+- **Planner warnings** — no weather location set, budget exceeded, Golden Week /
+  New Year / Obon crowding, prep checklist behind with departure imminent, and
+  the public holidays falling inside your dates.
+- **Place detail panels**, enriched with the note the hub pinned to that place.
+- **Trip map markers** for curated spots, practical POIs and the officially
+  published smoking areas.
+- **A dashboard trip-card badge** counting down to (and through) the trip.
+- **A Japan section in the exported trip PDF** — emergency numbers and phrases,
+  prep status and the shared budget.
+- **A live activity feed** built from core trip events, which now names *what*
+  changed — the place, the file, the budget line — not merely that something did.
+
+Everything is local-first: the datasets ship inside the plugin and all state lives
+in the plugin's own database. Weather and exchange rates come from TREK's own
+host brokers when available, falling back to free keyless endpoints, and every
+result is cached by a background job, so the tab renders fast. The UI is drawn
+entirely with inline SVG (no bundled images or web fonts, per TREK's sandbox),
+follows the host's light/dark theme, and speaks English and German off the TREK
+locale.
 
 ## Screenshots
 
@@ -160,11 +172,19 @@ This plugin requests the following permissions, each for a specific reason:
 | `db:write:days` | Creates/edits itinerary days when scheduling an added event (`ctx.days.*`). Needs your `day_edit`. |
 | `db:write:itinerary` | Assigns/unassigns an added place to a day (`ctx.itinerary.assign` / `unassign`). Needs your `day_edit`. |
 | `db:meta` | Pins shared trip tips and tags plugin-created places with a note (`ctx.meta.*`), stored in the plugin's own namespace on the trip/place. |
-| `events:subscribe` | Subscribes to core trip events (`place:created`, `file:created`, `day:updated`, …) to build the **live activity feed**. |
+| `events:subscribe` | Subscribes to core trip events (`place:created`, `file:created`, `day:updated`, …) to build the **live activity feed**, and to notice when the itinerary's days change so the day tints stay accurate. |
+| `jobs:run` | Runs the background cache refresh for exchange rates, earthquakes and news on a cron schedule, so the tab is instant when you open it instead of fetching on first paint. |
+| `notify:send` | Sends **you** a TREK notification when your own IC-card balance drops below your threshold, so you top up before the next gate. The recipient is always you — the plugin cannot notify anyone else. |
+| `rates:read` | Reads JPY exchange rates from TREK's own host broker (cached centrally, no API key, no outbound call). Falls back to open.er-api.com only when the broker is unavailable. |
+| `weather:read` | Reads the trip location's weather from TREK's own host broker. Falls back to api.open-meteo.com only when the broker is unavailable. |
 | `ws:broadcast:trip` | Notifies the trip's TREK clients when the shared board changes (checklist, expenses, prefectures, pinned tips). |
 | `ws:broadcast:user` | Notifies your own TREK clients when your personal IC balance changes. |
 | `hook:place-detail-provider` | Enriches a place's detail panel in the planner with the note the plugin pinned to it (`placeDetailProvider.getDetails`). |
-| `hook:trip-warning-provider` | Raises planner warnings from the plugin's state (`warningProvider.getWarnings`) — e.g. no weather location set, budget exceeded, Golden Week / New Year / Obon crowding. |
+| `hook:trip-warning-provider` | Raises planner warnings from the plugin's state (`warningProvider.getWarnings`) — no weather location set, budget exceeded, Golden Week / New Year / Obon crowding, prep checklist behind, public holidays inside your dates. |
+| `hook:map-marker-provider` | Puts curated sights, practical POIs (coin lockers, foreign-card ATMs, luggage forwarding) and the officially published designated smoking areas on the trip map. |
+| `hook:trip-card-provider` | Adds the countdown badge ("14 days to go", "In Japan · 3 left") to the trip's card on the TREK dashboard. |
+| `hook:pdf-section-provider` | Adds a Japan section to the exported trip PDF: emergency numbers and phrases, prep-checklist status and the shared budget. |
+| `hook:user-data` | GDPR erasure and portability. When a TREK account is deleted or exports its data, the plugin drops or returns everything personal it holds about that account (IC balance and ledger, phrase favourites, preferences) and de-attributes shared trip content. |
 | `http:outbound` | Base marker declaring outbound HTTP. On its own it reaches no host — the specific hosts below are what open. |
 | `http:outbound:api.open-meteo.com` | Current weather and the 5-day forecast for the trip's weather location (Open-Meteo, no API key). |
 | `http:outbound:open.er-api.com` | JPY exchange rates for the live yen ⇄ home-currency conversion (open.er-api.com, no API key). |
@@ -175,28 +195,22 @@ This plugin requests the following permissions, each for a specific reason:
 
 The native-budget features (`ctx.costs.*`) need TREK's **Costs (budget) addon**
 enabled on the trip; everything else works without it and degrades gracefully.
-
-**Ready for TREK 3.3.x (opt-in, off by default).** The server also ships
-fail-safe integrations that light up on newer hosts once you add the matching
-permissions: trip-map markers (`hook:map-marker-provider`), a dashboard
-countdown badge (`hook:trip-card-provider`), a PDF trip section
-(`hook:pdf-section-provider`), the shared FX broker (`rates:read`), scheduler-
-backed cache refresh (`jobs:run`), a low-IC-balance push (`notify:send`) and
-GDPR export/erase (`hook:user-data`). They are kept **out of the manifest** here
-so the plugin installs cleanly on **TREK 3.2.1**, which rejects any permission it
-doesn't recognise — add them back only on a 3.3.x host.
+The addon is deliberately **not** declared as a hard requirement, so the plugin
+still activates on a trip that has it switched off — the budget-sync controls
+simply explain that it is unavailable.
 
 Each outbound host is declared **both** as an `http:outbound:<host>` permission
 **and** in `egress[]` (identical lists), which is what the runtime network guard
-and the iframe CSP are built from. All three endpoints are free and keyless. This
-is a broad permission set — a version that adds still more will require an admin
-to re-approve the plugin.
+and the iframe CSP are built from. All six endpoints are free and keyless, and
+two of them — weather and exchange rates — are only contacted when TREK's own
+host brokers are unavailable. This is a broad permission set, and a version that
+adds still more will require an admin to re-approve the plugin.
 
 ## Setup
 
-1. Requires **TREK 3.2.1+** (the `trip-page` plugin type). Install the plugin
-   from the plugin store (Admin → Plugins → Discover) and activate it, approving
-   the permissions above.
+1. Requires **TREK 4.x** (declared as `>=4.0.0 <5.0.0`, which TREK enforces at
+   both install and activation). Install the plugin from the plugin store
+   (Admin → Plugins → Discover) and activate it, approving the permissions above.
 2. Open any **trip** in the planner — **TREK × Japan** appears as a tab inside
    that trip. Everything is automatically scoped to that trip; there is nothing
    to link by hand.

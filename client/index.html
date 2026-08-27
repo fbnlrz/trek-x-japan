@@ -318,7 +318,22 @@
     }
     return new Promise(function (resolve, reject) {
       var id = 'r' + (++reqSeq);
-      pending[id] = { resolve: resolve, reject: reject };
+      // A pending entry is settled only by a matching trek:response/trek:error.
+      // Without a timeout, one lost reply would hold its in-flight slot forever —
+      // four of those deadlock the queue and every tab spins with no error path,
+      // because the .catch can only fire on a rejection that never arrives.
+      var done = false;
+      var timer = setTimeout(function () {
+        if (done) return;
+        done = true; delete pending[id];
+        var e = new Error(T('the request timed out', 'Zeitüberschreitung der Anfrage'));
+        e.code = 'timeout';
+        reject(e);
+      }, 20000);
+      pending[id] = {
+        resolve: function (v) { if (done) return; done = true; clearTimeout(timer); resolve(v); },
+        reject: function (e) { if (done) return; done = true; clearTimeout(timer); reject(e); },
+      };
       post({ type: 'trek:invoke', requestId: id, sub: sub, method: method, body: body });
     });
   }
@@ -394,12 +409,17 @@
     if (app.reducedMotion) document.documentElement.setAttribute('data-reduce-motion', '1');
     else document.documentElement.removeAttribute('data-reduce-motion');
     applyTokens(m.tokens);
-    if (!booted) { booted = true; boot(); }
+    if (!booted) { booted = true; bootedWithTrip = ctx.tripId != null; boot(); }
+    // If the fallback timer booted us before trek:context arrived, boot() took
+    // the "open this from inside a trip" early return and never reached openTab.
+    // Re-boot for real once the tripId lands, or the tab stays stuck on that
+    // message for the life of the mount — in a trip-page that always has a trip.
+    else if (!bootedWithTrip && ctx.tripId != null) { bootedWithTrip = true; boot(); }
     else { renderHeader(); if (current) openTab(current, true); }
   }
-  // (≥3.2.1) live token contract: TREK sends the current theme's palette in
-  // `m.tokens`. Mirror any matching custom properties onto :root so our colours
-  // track the host exactly (accent, high-contrast, etc.). Harmless pre-3.2.1.
+  // Live token contract: TREK sends the current theme's palette in `m.tokens`.
+  // Mirror any matching custom properties onto :root so our colours track the
+  // host exactly (accent, high-contrast, etc.).
   function applyTokens(tokens) {
     if (!tokens || typeof tokens !== 'object') return;
     var root = document.documentElement;
@@ -504,7 +524,7 @@
 
   // ---- DOM helpers -------------------------------------------------------
   var root = document.getElementById('root');
-  var booted = false, current = null;
+  var booted = false, bootedWithTrip = false, current = null;
   var sectionCache = {};
   var tripInfo = null;
 
@@ -791,15 +811,15 @@
         ? ((pack.items || []).length
             ? (pack.items || []).slice(0, 40).map(function (p) { return '<div class="listrow"><span class="check' + (p.packed ? ' on' : '') + '" style="cursor:default">' + svg('check') + '</span><span style="flex:1">' + esc(p.name) + (p.bag ? ' <span class="faint" style="font-size:11px">· ' + esc(p.bag) + '</span>' : '') + '</span></div>'; }).join('')
             : na(T('No packing items in this trip yet.', 'Noch keine Packliste in dieser Reise.')))
-        : na(T('Native packing list — available in a TREK 3.2.1 trip.', 'Native Packliste — in einer TREK-3.2.1-Reise verfügbar.'));
+        : na(T('Native packing list — unavailable for this trip.', 'Native Packliste — für diese Reise nicht verfügbar.'));
       var filesHtml = files.available
         ? ((files.files || []).length
             ? (files.files || []).slice(0, 40).map(function (f) { return '<div class="listrow"><span style="color:var(--text-faint)">' + svg('book') + '</span><span style="flex:1">' + esc(f.name) + '</span></div>'; }).join('')
             : na(T('No files uploaded to this trip yet.', 'Noch keine Dateien in dieser Reise.')))
-        : na(T('Trip files — available in a TREK 3.2.1 trip.', 'Reise-Dateien — in einer TREK-3.2.1-Reise verfügbar.'));
+        : na(T('Trip files — unavailable for this trip.', 'Reise-Dateien — für diese Reise nicht verfügbar.'));
       var actHtml = (act.counts || []).length
         ? '<div class="wrap" style="margin-bottom:8px">' + (act.counts || []).slice(0, 8).map(function (c) { return '<span class="chip static">' + esc(c.event) + ' · ' + c.n + '</span>'; }).join('') + '</div>' +
-          (act.recent || []).slice(0, 10).map(function (a) { return '<div class="listrow"><span style="flex:1">' + esc(a.event) + '</span><span class="faint">' + ago(a.at) + '</span></div>'; }).join('')
+          (act.recent || []).slice(0, 10).map(function (a) { return '<div class="listrow"><span style="flex:1">' + esc(a.event) + (a.detail ? ' <span class="faint" style="font-size:11px">· ' + esc(a.detail) + '</span>' : '') + '</span><span class="faint">' + ago(a.at) + '</span></div>'; }).join('')
         : na(T('Live feed of trip changes (places, days, files…) appears here.', 'Live-Feed der Reise-Änderungen (Orte, Tage, Dateien…) erscheint hier.'));
 
       function resvIcon(t) { if (/flight|plane|air/.test(t)) return 'plane'; if (/train|rail|shinkansen|jr/.test(t)) return 'train'; if (/hotel|stay|lodg|ryokan|accom|room/.test(t)) return 'bed'; return 'ticket'; }
@@ -896,7 +916,7 @@
 
     panel.innerHTML =
       '<div class="card"><h2>' + svg('globe') + T('Translator', 'Übersetzer') + '</h2>' +
-        '<div class="row" style="gap:8px;margin-bottom:8px"><select class="fld" id="tr-dir" style="max-width:170px">' + dirOpts + '</select>' +
+        '<div class="row" style="gap:8px;margin-bottom:8px"><select class="fld" id="tr-dir" data-trek-native style="max-width:170px">' + dirOpts + '</select>' +
         '<button class="btn sm" id="tr-go">' + T('Translate', 'Übersetzen') + '</button></div>' +
         '<textarea class="fld" id="tr-in" rows="2" placeholder="' + T('Type text to translate…', 'Text zum Übersetzen…') + '">' + esc(translatorState.q) + '</textarea>' +
         '<div id="tr-out" style="margin-top:10px">' + translatorOut() + '</div>' +
@@ -1083,12 +1103,24 @@
     });
   };
   function useMyLocation(panel) {
+    // The plugin frame is sandboxed at an opaque origin, which can never hold the
+    // geolocation permission — so on a real TREK host this call is expected to be
+    // denied and we fall back to the trip location. It is still attempted because
+    // it does work in a plain harness, and the fallback is what we advertise.
     if (!navigator.geolocation) { notify('warning', T('Location not available here.', 'Standort hier nicht verfügbar.')); return; }
-    notify('info', T('Locating…', ' Orte…'));
+    notify('info', T('Locating…', 'Standort wird ermittelt…'));
+    var useTrip = function () {
+      if (poiState.tripLoc) {
+        poiState.loc = poiState.tripLoc; renderPoi(panel); reportHeight();
+        notify('info', T('Using the trip location.', 'Nutze den Reiseort.'));
+      } else {
+        notify('warning', T('No location available — set a trip location in Settings.', 'Kein Standort verfügbar — setze einen Reiseort in den Einstellungen.'));
+      }
+    };
     navigator.geolocation.getCurrentPosition(function (pos) {
       poiState.loc = { lat: pos.coords.latitude, lon: pos.coords.longitude, label: T('your location', 'dein Standort'), me: true };
       renderPoi(panel); reportHeight();
-    }, function () { notify('error', T('Could not get your location — using the trip location.', 'Standort nicht ermittelbar — nutze den Reiseort.')); if (poiState.tripLoc) { poiState.loc = poiState.tripLoc; renderPoi(panel); } },
+    }, useTrip,
     { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 });
   }
   function renderPoi(panel) {
@@ -1396,7 +1428,7 @@
     invoke('/costs', 'GET').catch(function () { return { available: false }; }).then(function (c) {
       var body;
       if (!c.available) {
-        body = '<div class="banner warn">' + T('The Costs (budget) addon is not enabled on this trip, or your host is pre-3.2.1. Enable it in TREK to push expenses into the native budget.', 'Das Costs-(Budget-)Addon ist für diese Reise nicht aktiviert oder der Host ist älter als 3.2.1. Aktiviere es in TREK, um Ausgaben ins native Budget zu übertragen.') + '</div>';
+        body = '<div class="banner warn">' + T('The Costs (budget) addon is not enabled on this trip. Enable it in TREK to push expenses into the native budget.', 'Das Costs-(Budget-)Addon ist für diese Reise nicht aktiviert. Aktiviere es in TREK, um Ausgaben ins native Budget zu übertragen.') + '</div>';
       } else {
         var rows = (c.items || []).map(function (it) {
           return '<tr><td>' + esc(it.name) + '</td><td class="num">' + (it.amount != null ? '¥' + Math.round(it.amount).toLocaleString('en-US') : '<span class="faint">—</span>') + '</td>' +
@@ -1642,7 +1674,28 @@
         ? T('Only events during your dates: ', 'Nur Events in deinem Zeitraum: ') + months.map(monthName).join(', ')
         : T('Set trip dates to see events in your window.', 'Setze Reisedaten, um Events im Zeitraum zu sehen.');
 
+      // Public holidays & nationwide crowd windows falling inside the trip — the
+      // same day-precise facts that tint the day cards in TREK's Plan sidebar.
+      var cal = d.calendar || [];
+      var calRows = cal.map(function (c) {
+        var isCrowd = !!c.crowd;
+        var label = isCrowd ? T(c.crowd.en, c.crowd.de) : T(c.holiday.en, c.holiday.de);
+        var sub = isCrowd && c.holiday ? T(c.holiday.en, c.holiday.de) : (c.holiday ? c.holiday.jp : '');
+        return '<div class="listrow">' +
+          '<span style="color:' + (isCrowd ? 'var(--warning)' : 'var(--sakura)') + '">●</span>' +
+          '<span style="flex:1">' + esc(label) +
+            (sub ? ' <span class="faint" style="font-size:11px">· ' + esc(sub) + '</span>' : '') + '</span>' +
+          '<span class="faint">' + esc(mmdd(c.date.slice(5))) + '</span></div>';
+      }).join('');
+      var calCard = cal.length
+        ? '<div class="card"><h2>' + svg('season') + T('Holidays & crowd windows', 'Feiertage & Stoßzeiten') + '</h2>' +
+            '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' +
+            T('Days inside your trip when banks and many shops close, transport sells out and prices rise.', 'Tage in deiner Reise, an denen Banken und viele Geschäfte schließen, Transport ausgebucht ist und Preise steigen.') + '</div>' +
+            calRows + '</div>'
+        : '';
+
       panel.innerHTML =
+        (calCard ? calCard : '') +
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('season') + T('Sakura & kōyō', 'Sakura & Kōyō') + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 10px">' + T('Average full-bloom (cherry) and peak-colour (autumn) dates. Rows in your travel window are highlighted.', 'Durchschnittliche Vollblüte (Kirsche) und Farbhöhepunkt (Herbst). Zeilen in deinem Reisezeitraum sind hervorgehoben.') + '</div>' +
@@ -1745,9 +1798,9 @@
         '<div class="grid cols2">' +
           '<div class="card"><h2>' + svg('settings') + T('Personal', 'Persönlich') + '</h2>' +
             '<div class="muted" style="font-size:12.5px;margin:-4px 0 12px">' + T('Only you see these.', 'Nur du siehst diese.') + '</div>' +
-            '<label class="lbl">' + T('Home currency', 'Heimatwährung') + '</label><select class="fld" id="s-cur">' +
+            '<label class="lbl">' + T('Home currency', 'Heimatwährung') + '</label><select class="fld" id="s-cur" data-trek-native>' +
               ['EUR', 'USD', 'GBP', 'CHF'].map(function (c) { return opt(c, p.home_currency); }).join('') + '</select>' +
-            '<label class="lbl" style="margin-top:10px">' + T('IC card', 'IC-Karte') + '</label><select class="fld" id="s-ic">' +
+            '<label class="lbl" style="margin-top:10px">' + T('IC card', 'IC-Karte') + '</label><select class="fld" id="s-ic" data-trek-native>' +
               ['', 'Suica', 'Pasmo', 'ICOCA', 'Andere'].map(function (c) { return '<option value="' + c + '"' + (p.ic_card === c ? ' selected' : '') + '>' + (c || '—') + '</option>'; }).join('') + '</select>' +
             '<label class="lbl" style="margin-top:10px">' + T('Low IC warning (¥)', 'IC-Warnung (¥)') + '</label><input class="fld" id="s-low" type="number" value="' + esc(p.low_ic_threshold || '') + '" />' +
           '</div>' +
@@ -1830,7 +1883,10 @@
   // ---- start -------------------------------------------------------------
   post({ type: 'trek:ready' });
   // Fallback: if no context arrives (older host / harness quirk), boot anyway.
-  setTimeout(function () { if (!booted) { ctx.theme = null; document.documentElement.dataset.theme = resolveTheme({}); booted = true; boot(); } }, 800);
+  // Last-resort boot for a harness that sends no trek:context at all. A real host
+  // always sends one, so give a cold or backgrounded planner tab room to deliver
+  // it — applyContext re-boots if this fires first and the trip arrives later.
+  setTimeout(function () { if (!booted) { ctx.theme = null; document.documentElement.dataset.theme = resolveTheme({}); booted = true; boot(); } }, 2500);
 })();
 </script>
 </body>

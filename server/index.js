@@ -1,17 +1,22 @@
-// TREK × Japan — server entry (type: trip-page, TREK >= 3.2.1).
+// TREK × Japan — server entry (type: trip-page, TREK >= 4.0.0).
 // Built CommonJS, runs in an isolated child process; all host access via `ctx`.
 //
-// This build exercises the full TREK 3.2.1 plugin surface:
-//  - trip-scoped, collaborative own-DB data (db:own) shared by trip members
+// v4 build — the full plugin surface, all grants active:
+//  - trip-scoped, collaborative own-DB data (db:own, atomic writes via ctx.db.tx)
 //  - db:read:trips / db:read:users  (membership gate + collaborator names)
 //  - db:read:packing / db:read:files  (native packing list + trip documents)
-//  - db:read:costs / db:write:costs  (native budget items; requiredAddons: budget)
+//  - db:read:costs / db:write:costs  (native budget items; Costs addon)
 //  - db:write:trips / places / days / itinerary  (write into the trip planner)
 //  - db:meta  (plugin-private KV on trip/place/day entities)
-//  - events:subscribe  (react to core trip events -> live activity feed)
-//  - hook:place-detail-provider + hook:trip-warning-provider  (enrich core UI)
+//  - events:subscribe  (core trip events + snapshots -> live activity feed)
+//  - jobs:run  (cron jobs + persistent ctx.scheduler cache refresh)
+//  - rates:read / weather:read  (host FX + weather brokers, egress fallback)
+//  - notify:send  (low-IC-balance push to the acting user)
+//  - hook:place-detail-provider / trip-warning / map-marker / trip-card /
+//    pdf-section  (enrich core UI natively)
+//  - hook:user-data  (GDPR erasure + portability on the plugin's own db)
 //  - ws:broadcast:trip / ws:broadcast:user  (notify core clients on changes)
-//  - http:outbound to open-meteo / er-api / jma  (weather, FX, quakes)
+//  - http:outbound to open-meteo / er-api / jma / overpass  (fallback + live data)
 const { definePlugin } = require('trek-plugin-sdk');
 
 // ---------------------------------------------------------------------------
@@ -130,8 +135,21 @@ function isStale(e, ttl) { if (!e || !e.fetched_at) return true; const t = Date.
 async function loadUserPrefs(ctx, userId) {
   const out = Object.assign({}, USER_PREF_DEFAULTS);
   for (const k of USER_PREF_KEYS) if (ctx.config && ctx.config[k] != null && ctx.config[k] !== '') out[k] = String(ctx.config[k]);
+  // The plugin's own in-tab Settings are authoritative — that is where the user
+  // edits these — so read them first and let them win.
   const rows = await ctx.db.query('SELECT key, value FROM user_prefs WHERE user_id = ?', userId);
-  for (const r of rows) if (USER_PREF_KEYS.includes(r.key)) out[r.key] = r.value;
+  const own = {};
+  for (const r of rows) if (USER_PREF_KEYS.includes(r.key) && r.value != null && r.value !== '') own[r.key] = r.value;
+  // (v4) For anything the user never set here, fall back to the same-named
+  // scope:'user' field on TREK's own Settings → Plugins page. Only the MISSING
+  // keys are fetched: ctx.settings.get costs one RPC each and these routes are
+  // hot, so a fully-configured user adds no calls at all.
+  for (const k of USER_PREF_KEYS) {
+    if (own[k] != null) continue;
+    const s = await attempt(function () { return ctx.settings && ctx.settings.get ? ctx.settings.get(k) : undefined; });
+    if (s.ok && s.value != null && s.value !== '') out[k] = String(s.value);
+  }
+  for (const k of Object.keys(own)) out[k] = own[k];
   return out;
 }
 async function saveUserPref(ctx, userId, key, value) { await ctx.db.exec('INSERT INTO user_prefs(user_id, key, value) VALUES(?, ?, ?) ON CONFLICT(user_id, key) DO UPDATE SET value=excluded.value', userId, key, value == null ? '' : String(value)); }
@@ -165,6 +183,13 @@ function normReservation(x) {
   };
 }
 
+// A Day row, read defensively — like Reservation, only `id` is guaranteed.
+function normDay(d) {
+  if (!d || typeof d !== 'object' || d.id == null) return null;
+  const date = pick(d, ['date', 'day_date', 'start_date']);
+  return { id: d.id, date: date ? String(date).slice(0, 10) : null, title: pick(d, ['title', 'name']) };
+}
+
 // remote refreshers
 function haversineKm(aLat, aLon, bLat, bLon) { const R = 6371, r = Math.PI / 180; const dLat = (bLat - aLat) * r, dLon = (bLon - aLon) * r; const s = Math.sin(dLat / 2) ** 2 + Math.cos(aLat * r) * Math.cos(bLat * r) * Math.sin(dLon / 2) ** 2; return 2 * R * Math.asin(Math.sqrt(s)); }
 // Live "near me" categories that are too dense to bundle (konbini alone ~56k) —
@@ -192,20 +217,77 @@ async function refreshNews(ctx) {
   }
   const data = { items }; return { data, fetched_at: await cacheSet(ctx, 'news', data) };
 }
+const FX_CURRENCIES = ['EUR', 'USD', 'GBP', 'CHF'];
+// Pull the four rates we display out of whatever shape a source returned, and
+// return null unless at least one is a real number. Checking only `typeof
+// value === 'object'` is not enough: the broker's return shape is unspecified,
+// and any truthy object would otherwise be accepted, cache four `undefined`s
+// for the full six-hour TTL and silently kill every currency conversion.
+function normRates(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const table = (raw.rates && typeof raw.rates === 'object') ? raw.rates
+    : (raw.quotes && typeof raw.quotes === 'object') ? raw.quotes
+    : raw;
+  const out = {};
+  let found = 0;
+  for (const c of FX_CURRENCIES) {
+    const v = typeof table[c] === 'string' ? parseFloat(table[c]) : table[c];
+    if (typeof v === 'number' && Number.isFinite(v) && v > 0) { out[c] = v; found++; }
+    else out[c] = null;
+  }
+  return found ? out : null;
+}
 async function refreshFx(ctx) {
   // Prefer the host FX broker (rates:read, no egress, cached upstream); fall back
   // to the direct er-api call so this keeps working on hosts without the broker.
   let rates = null, source = null;
   const br = await attempt(function () { return ctx.rates && ctx.rates.get ? ctx.rates.get('JPY') : null; });
-  if (br.ok && br.value && typeof br.value === 'object') { rates = br.value; source = 'host'; }
-  if (!rates) { const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY'); rates = (raw && raw.rates) || {}; source = raw && (raw.time_last_update_utc || null); }
-  const data = { base: 'JPY', rates: { EUR: rates.EUR, USD: rates.USD, GBP: rates.GBP, CHF: rates.CHF }, source_updated: source };
+  if (br.ok) { rates = normRates(br.value); if (rates) source = 'host'; }
+  if (!rates) {
+    const raw = await timedFetch('https://open.er-api.com/v6/latest/JPY');
+    rates = normRates(raw);
+    source = raw && (raw.time_last_update_utc || null);
+  }
+  if (!rates) throw new Error('no usable exchange rates');
+  ctx.log.info('fx refreshed', { source: source === 'host' ? 'host broker' : 'open.er-api.com' });
+  const data = { base: 'JPY', rates, source_updated: source };
   return { data, fetched_at: await cacheSet(ctx, 'fx', data) };
 }
+// Map either the host weather broker's result or a raw open-meteo response onto
+// the shape the client renders. Returns null when the payload is unrecognizable.
+function normWeather(raw, lat, lon) {
+  if (!raw || typeof raw !== 'object') return null;
+  const cur = raw.current || null;
+  const daily = raw.daily || null;
+  const current = cur ? {
+    temp: pick(cur, ['temperature_2m', 'temp', 'temperature']),
+    humidity: pick(cur, ['relative_humidity_2m', 'humidity']),
+    code: pick(cur, ['weather_code', 'code']),
+    wind: pick(cur, ['wind_speed_10m', 'wind']),
+  } : null;
+  let days = [];
+  if (daily && Array.isArray(daily.time)) {
+    // open-meteo columnar shape
+    days = daily.time.map(function (d, i) { return { date: d, code: daily.weather_code ? daily.weather_code[i] : null, tmax: daily.temperature_2m_max ? daily.temperature_2m_max[i] : null, tmin: daily.temperature_2m_min ? daily.temperature_2m_min[i] : null, pop: daily.precipitation_probability_max ? daily.precipitation_probability_max[i] : null }; });
+  } else if (Array.isArray(daily)) {
+    // pre-normalized row shape ({date, code, tmax, tmin, pop?})
+    days = daily.map(function (d) { return d && typeof d === 'object' ? { date: pick(d, ['date', 'time']), code: pick(d, ['code', 'weather_code']), tmax: pick(d, ['tmax', 'temperature_max']), tmin: pick(d, ['tmin', 'temperature_min']), pop: pick(d, ['pop', 'precipitation_probability']) } : null; }).filter(Boolean);
+  }
+  if (!current && !days.length) return null;
+  return { lat, lon, current, daily: days };
+}
 async function refreshWeather(ctx, lat, lon, key) {
-  const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
-  const raw = await timedFetch(url);
-  const data = { lat, lon, current: raw && raw.current ? { temp: raw.current.temperature_2m, humidity: raw.current.relative_humidity_2m, code: raw.current.weather_code, wind: raw.current.wind_speed_10m } : null, daily: raw && raw.daily && Array.isArray(raw.daily.time) ? raw.daily.time.map(function (d, i) { return { date: d, code: raw.daily.weather_code[i], tmax: raw.daily.temperature_2m_max[i], tmin: raw.daily.temperature_2m_min[i], pop: raw.daily.precipitation_probability_max ? raw.daily.precipitation_probability_max[i] : null }; }) : [] };
+  // (v4) Prefer the host weather broker (weather:read — host-cached, no egress);
+  // fall back to the direct open-meteo call when the broker is missing or its
+  // payload doesn't map onto the fields the client renders.
+  let data = null;
+  const br = await attempt(function () { return ctx.weather && ctx.weather.get ? ctx.weather.get(lat, lon) : null; });
+  if (br.ok && br.value) data = normWeather(br.value, lat, lon);
+  if (!data) {
+    const url = 'https://api.open-meteo.com/v1/forecast?latitude=' + encodeURIComponent(lat) + '&longitude=' + encodeURIComponent(lon) + '&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&forecast_days=5&timezone=Asia%2FTokyo';
+    data = normWeather(await timedFetch(url), lat, lon);
+  }
+  if (!data) throw new Error('weather unavailable');
   return { data, fetched_at: await cacheSet(ctx, key || 'weather', data) };
 }
 async function refreshQuake(ctx) { const raw = await timedFetch('https://www.jma.go.jp/bosai/quake/data/list.json'); const list = Array.isArray(raw) ? raw.slice(0, 12) : []; const data = { items: list.map(function (q) { return { time: q.at || q.rdt || null, place: q.anm || q.en_anm || '', mag: q.mag != null ? q.mag : null, intensity: q.maxi || null }; }) }; return { data, fetched_at: await cacheSet(ctx, 'quake', data) }; }
@@ -234,18 +316,125 @@ function dateForMonth(trip, month) {
   return td.start;
 }
 function tripMonths(start, end) { if (!start) return null; const s = new Date(start); if (isNaN(s.getTime())) return null; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e; const m = new Set(); let y = s.getUTCFullYear(), mo = s.getUTCMonth(); const ey = ed.getUTCFullYear(), em = ed.getUTCMonth(); let g = 0; while ((y < ey || (y === ey && mo <= em)) && g < 24) { m.add(mo + 1); mo++; if (mo > 11) { mo = 0; y++; } g++; } return Array.from(m); }
-// Does [start,end] overlap the MM-DD..MM-DD window in any spanned year?
-function overlapsSeason(start, end, fromMD, toMD) {
-  if (!start) return false; const s = new Date(start); if (isNaN(s.getTime())) return false; const e = end ? new Date(end) : s; const ed = isNaN(e.getTime()) ? s : e;
-  for (let y = s.getUTCFullYear(); y <= ed.getUTCFullYear(); y++) {
-    const a = Date.parse(y + '-' + fromMD + 'T00:00:00Z'), b = Date.parse(y + '-' + toMD + 'T23:59:59Z');
-    if (Number.isFinite(a) && Number.isFinite(b) && ed.getTime() >= a && s.getTime() <= b) return true;
+// --- Japanese calendar: national holidays + crowd windows -------------------
+// Day-precise, so a warning can name the exact dates that will be closed or
+// packed. Matsuri are only known by month in the bundled dataset, so they stay
+// out of here — they can't be pinned to a day without inventing one.
+function pad2(n) { return (n < 10 ? '0' : '') + n; }
+// nth Monday of a month, as a day-of-month (month is 1-12).
+function nthMonday(year, month, n) {
+  const dow = new Date(Date.UTC(year, month - 1, 1)).getUTCDay(); // 0=Sun
+  return 1 + ((1 - dow + 7) % 7) + (n - 1) * 7;
+}
+// Equinox approximations valid for 1980-2099 (the standard Japanese formula).
+function vernalEquinox(y) { return Math.floor(20.8431 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4)); }
+function autumnalEquinox(y) { return Math.floor(23.2488 + 0.242194 * (y - 1980) - Math.floor((y - 1980) / 4)); }
+
+const HOLIDAY_CACHE = {};
+// Map of YYYY-MM-DD -> { en, de, jp } for one year, including substitute
+// holidays (振替休日: a holiday landing on Sunday moves to the next free day).
+function jpHolidays(year) {
+  if (HOLIDAY_CACHE[year]) return HOLIDAY_CACHE[year];
+  const at = function (m, d) { return year + '-' + pad2(m) + '-' + pad2(d); };
+  const h = {};
+  h[at(1, 1)] = { en: 'New Year’s Day', de: 'Neujahr', jp: '元日' };
+  h[at(1, nthMonday(year, 1, 2))] = { en: 'Coming of Age Day', de: 'Tag der Volljährigkeit', jp: '成人の日' };
+  h[at(2, 11)] = { en: 'National Foundation Day', de: 'Tag der Reichsgründung', jp: '建国記念の日' };
+  h[at(2, 23)] = { en: 'Emperor’s Birthday', de: 'Geburtstag des Kaisers', jp: '天皇誕生日' };
+  h[at(3, vernalEquinox(year))] = { en: 'Vernal Equinox', de: 'Frühlings-Tagundnachtgleiche', jp: '春分の日' };
+  h[at(4, 29)] = { en: 'Shōwa Day', de: 'Shōwa-Tag', jp: '昭和の日' };
+  h[at(5, 3)] = { en: 'Constitution Memorial Day', de: 'Tag der Verfassung', jp: '憲法記念日' };
+  h[at(5, 4)] = { en: 'Greenery Day', de: 'Tag des Grüns', jp: 'みどりの日' };
+  h[at(5, 5)] = { en: 'Children’s Day', de: 'Kindertag', jp: 'こどもの日' };
+  h[at(7, nthMonday(year, 7, 3))] = { en: 'Marine Day', de: 'Tag des Meeres', jp: '海の日' };
+  h[at(8, 11)] = { en: 'Mountain Day', de: 'Tag des Berges', jp: '山の日' };
+  h[at(9, nthMonday(year, 9, 3))] = { en: 'Respect for the Aged Day', de: 'Tag der Achtung vor dem Alter', jp: '敬老の日' };
+  h[at(9, autumnalEquinox(year))] = { en: 'Autumnal Equinox', de: 'Herbst-Tagundnachtgleiche', jp: '秋分の日' };
+  h[at(10, nthMonday(year, 10, 2))] = { en: 'Sports Day', de: 'Tag des Sports', jp: 'スポーツの日' };
+  h[at(11, 3)] = { en: 'Culture Day', de: 'Tag der Kultur', jp: '文化の日' };
+  h[at(11, 23)] = { en: 'Labour Thanksgiving Day', de: 'Tag des Dankes für die Arbeit', jp: '勤労感謝の日' };
+  // 国民の休日 — a weekday sandwiched between two holidays becomes one itself.
+  // This is what turns the mid-September pair into "Silver Week", so it is a real
+  // planning fact, not a curiosity. Computed on the base set, before substitutes.
+  for (const key of Object.keys(h).sort()) {
+    const t = Date.parse(key + 'T00:00:00Z');
+    if (!Number.isFinite(t)) continue;
+    const gapDay = new Date(t + 86400000), after = new Date(t + 2 * 86400000);
+    const gapKey = gapDay.toISOString().slice(0, 10), afterKey = after.toISOString().slice(0, 10);
+    if (!h[gapKey] && h[afterKey] && gapDay.getUTCDay() !== 0) h[gapKey] = { en: 'Citizens’ Holiday', de: 'Bürgerfeiertag', jp: '国民の休日' };
   }
-  return false;
+  // 振替休日 — a holiday landing on Sunday transfers to the next free day.
+  for (const key of Object.keys(h).sort()) {
+    const t = Date.parse(key + 'T00:00:00Z');
+    if (!Number.isFinite(t) || new Date(t).getUTCDay() !== 0) continue;
+    let next = t + 86400000, guard = 0;
+    while (guard++ < 7) {
+      const k = new Date(next).toISOString().slice(0, 10);
+      if (!h[k]) { h[k] = { en: 'Substitute Holiday', de: 'Ersatzfeiertag', jp: '振替休日' }; break; }
+      next += 86400000;
+    }
+  }
+  HOLIDAY_CACHE[year] = h;
+  return h;
+}
+function holidayFor(dateStr) {
+  const d = String(dateStr || '').slice(0, 10);
+  const y = parseInt(d.slice(0, 4), 10);
+  if (!Number.isFinite(y) || y < 1980 || y > 2099) return null;
+  return jpHolidays(y)[d] || null;
+}
+// The three windows when the whole country travels at once: transport and
+// lodging sell out and prices spike. New Year wraps the year boundary.
+const CROWD_WINDOWS = [
+  { key: 'golden-week', from: '04-29', to: '05-06', en: 'Golden Week', de: 'Golden Week' },
+  { key: 'obon', from: '08-10', to: '08-17', en: 'Obon week', de: 'Obon-Woche' },
+  { key: 'new-year', from: '12-28', to: '01-04', en: 'New Year (o-shōgatsu)', de: 'Neujahr (O-shōgatsu)' },
+];
+function crowdWindowFor(dateStr) {
+  const md = String(dateStr || '').slice(5, 10);
+  if (!/^\d{2}-\d{2}$/.test(md)) return null;
+  for (const w of CROWD_WINDOWS) {
+    const wrap = w.from > w.to;
+    if (wrap ? (md >= w.from || md <= w.to) : (md >= w.from && md <= w.to)) return w;
+  }
+  return null;
+}
+// Every holiday / crowd day inside a trip window, day by day (capped at ~1 year).
+function calendarInRange(start, end) {
+  const out = [];
+  if (!start) return out;
+  const s = Date.parse(String(start).slice(0, 10) + 'T00:00:00Z');
+  if (!Number.isFinite(s)) return out;
+  const e = end ? Date.parse(String(end).slice(0, 10) + 'T00:00:00Z') : s;
+  const last = Number.isFinite(e) && e >= s ? e : s;
+  for (let t = s, guard = 0; t <= last && guard < 400; t += 86400000, guard++) {
+    const d = new Date(t).toISOString().slice(0, 10);
+    const h = holidayFor(d), c = crowdWindowFor(d);
+    if (!h && !c) continue;
+    out.push({ date: d, holiday: h || null, crowd: c ? { key: c.key, en: c.en, de: c.de } : null });
+  }
+  return out;
 }
 
-async function logActivity(ctx, tripId, event) {
-  await ctx.db.exec('INSERT INTO activity(trip_id, event, at) VALUES(?, ?, ?)', tripId, event, nowIso());
+// (v4) Turn an event snapshot into a short human label for the feed. The host
+// only delivers `snapshot` for families we also hold db:read:* for — everything
+// else arrives bare, so every field here is optional by construction.
+function snapshotLabel(entity, snapshot) {
+  if (!snapshot || typeof snapshot !== 'object') return null;
+  if (entity === 'budget') {
+    const name = pick(snapshot, ['name', 'title']);
+    const amt = costAmount(snapshot);
+    const cur = costCurrency(snapshot) || 'JPY';
+    if (name && amt != null) return String(name) + ' · ' + cur + ' ' + Math.round(amt).toLocaleString('en-US');
+    if (name) return String(name);
+    return amt != null ? cur + ' ' + Math.round(amt).toLocaleString('en-US') : null;
+  }
+  const label = pick(snapshot, ['name', 'title', 'filename', 'label', 'date', 'note']);
+  return label != null ? String(label).slice(0, 120) : null;
+}
+
+async function logActivity(ctx, tripId, event, entity, detail) {
+  await ctx.db.exec('INSERT INTO activity(trip_id, event, entity, detail, at) VALUES(?, ?, ?, ?, ?)', tripId, event, entity || null, detail || null, nowIso());
   // keep only the most recent 200 per trip
   await ctx.db.exec('DELETE FROM activity WHERE trip_id = ? AND id NOT IN (SELECT id FROM activity WHERE trip_id = ? ORDER BY id DESC LIMIT 200)', tripId, tripId);
 }
@@ -260,8 +449,18 @@ async function icAdjust(req, ctx, kind) {
   const cur = b.length ? b[0].yen : 0;
   const next = kind === 'charge' ? cur + amount : Math.max(0, cur - amount);
   const at = nowIso();
-  await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, next, at);
-  await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, kind, amount, next, at);
+  // (v4) Balance + ledger commit atomically via ctx.db.tx; sequential fallback
+  // keeps an unversioned host working (same statements, no atomicity).
+  const tx = await attempt(function () {
+    return ctx.db.tx([
+      { sql: 'INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', args: [userId, next, at] },
+      { sql: 'INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', args: [userId, kind, amount, next, at] },
+    ]);
+  });
+  if (!tx.ok) {
+    await ctx.db.exec('INSERT INTO ic_balance(user_id, yen, updated_at) VALUES(?, ?, ?) ON CONFLICT(user_id) DO UPDATE SET yen=excluded.yen, updated_at=excluded.updated_at', userId, next, at);
+    await ctx.db.exec('INSERT INTO ic_ledger(user_id, kind, amount, balance_after, at) VALUES(?, ?, ?, ?, ?)', userId, kind, amount, next, at);
+  }
   await safeBroadcastUser(ctx, userId, 'ic:changed', { yen: next });
   // (≥3.3) Proactive host notification (notify:send) when a spend drops your own
   // IC balance below your threshold — so you top up before the next gate. Scope is
@@ -308,6 +507,10 @@ const PLUGIN = {
     await ctx.db.migrate('t011_cost_sync', 'CREATE TABLE IF NOT EXISTS cost_sync (spend_id INTEGER PRIMARY KEY, cost_id INTEGER, at TEXT)');
     await ctx.db.migrate('t012_pinned_tips', 'CREATE TABLE IF NOT EXISTS pinned_tips (trip_id INTEGER PRIMARY KEY, text TEXT, by_user INTEGER, at TEXT)');
     await ctx.db.migrate('t013_transport_legs', 'CREATE TABLE IF NOT EXISTS transport_legs (trip_id INTEGER NOT NULL, leg_key TEXT NOT NULL, qty INTEGER NOT NULL DEFAULT 0, by_user INTEGER, at TEXT, PRIMARY KEY(trip_id, leg_key))');
+    // (v4) The event payload now carries an entity + snapshot for every family we
+    // hold db:read:* for, so the feed can say WHAT changed, not just that it did.
+    await attempt(function () { return ctx.db.migrate('t015_activity_entity', 'ALTER TABLE activity ADD COLUMN entity TEXT'); });
+    await attempt(function () { return ctx.db.migrate('t016_activity_detail', 'ALTER TABLE activity ADD COLUMN detail TEXT'); });
     // personal, per-user
     await ctx.db.migrate('u001_user_prefs', 'CREATE TABLE IF NOT EXISTS user_prefs (user_id INTEGER NOT NULL, key TEXT NOT NULL, value TEXT, PRIMARY KEY(user_id, key))');
     await ctx.db.migrate('u002_phrase_favs', 'CREATE TABLE IF NOT EXISTS phrase_favs (user_id INTEGER NOT NULL, phrase_id TEXT NOT NULL, at TEXT, PRIMARY KEY(user_id, phrase_id))');
@@ -315,21 +518,24 @@ const PLUGIN = {
     await ctx.db.migrate('u004_ic_balance', 'CREATE TABLE IF NOT EXISTS ic_balance (user_id INTEGER PRIMARY KEY, yen INTEGER NOT NULL DEFAULT 0, updated_at TEXT)');
     await ctx.db.migrate('u005_ic_ledger', 'CREATE TABLE IF NOT EXISTS ic_ledger (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL, amount INTEGER NOT NULL, balance_after INTEGER NOT NULL, at TEXT)');
     await ctx.db.migrate('g001_cache', 'CREATE TABLE IF NOT EXISTS cache (key TEXT PRIMARY KEY, json TEXT, fetched_at TEXT)');
-    // (≥3.3) Persistent, userless scheduling (jobs:run). This is the reliable way
-    // to keep FX / earthquake / news caches warm — `jobs[]` are not guaranteed to
-    // fire on every host. Upsert-by-name, so re-arming on each load is idempotent.
-    // Fail-safe: a host without ctx.scheduler simply serves caches on demand.
-    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(6 * 60 * 60 * 1000, 'fx'); });
-    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(15 * 60 * 1000, 'quake'); });
-    await attempt(function () { return ctx.scheduler && ctx.scheduler.every(30 * 60 * 1000, 'news'); });
+    // (v4) Cache refresh now runs ONCE, from the declared cron jobs[] — they fire
+    // reliably here because jobs:run is granted. Earlier builds ALSO armed
+    // ctx.scheduler timers for the same three caches as a workaround; those are
+    // persistent and survive restarts, so simply dropping the arming code would
+    // leave them firing forever and double every outbound fetch. Cancel them
+    // explicitly on load — idempotent, and a no-op on a fresh install.
+    for (const name of ['fx', 'quake', 'news']) {
+      await attempt(function () { return ctx.scheduler && ctx.scheduler.cancel(name); });
+    }
     ctx.log.info('TREK x Japan (trip-page) loaded');
   },
 
   async onUnload(ctx) { ctx.log.info('TREK x Japan unloading'); },
 
-  // (≥3.3) Persistent scheduler callback (jobs:run) — userless, like a job. Keeps
-  // the shared caches warm so weather/quake/news are instant when someone opens
-  // the tab. Named timers map 1:1 to the refreshers.
+  // Persistent scheduler callback (jobs:run) — userless, like a job. Cache
+  // refresh moved to jobs[] in v4, so this now only catches a legacy timer that
+  // outlived its cancel() on an upgraded install. Kept deliberately: a scheduled
+  // task that fires with no handler is a silent error, and the work is idempotent.
   async scheduled(input, ctx) {
     const name = input && input.name;
     try {
@@ -377,7 +583,9 @@ const PLUGIN = {
       try {
         const tripId = toNum(payload && payload.tripId, null);
         if (tripId == null) return;
-        await logActivity(ctx, tripId, String(payload.event || 'event'));
+        const entity = payload && payload.entity ? String(payload.entity) : null;
+        const detail = snapshotLabel(entity, payload && payload.snapshot);
+        await logActivity(ctx, tripId, String(payload.event || 'event'), entity, detail);
       } catch (e) { ctx.log.warn('event handler', { msg: String(e && e.message) }); }
     } },
   ],
@@ -414,9 +622,17 @@ const PLUGIN = {
           const tc = await ctx.db.query('SELECT start, end FROM trip_cache WHERE trip_id = ?', id);
           if (tc.length) {
             const s = tc[0].start, e = tc[0].end;
-            if (overlapsSeason(s, e, '04-29', '05-06')) out.push({ level: 'info', message: 'TREK × Japan: your dates hit Golden Week — book transport & lodging early, expect crowds.' });
-            if (overlapsSeason(s, e, '12-28', '01-04')) out.push({ level: 'info', message: 'TREK × Japan: New Year (o-shogatsu) — many shops and sights close; plan around it.' });
-            if (overlapsSeason(s, e, '08-10', '08-17')) out.push({ level: 'info', message: 'TREK × Japan: Obon week — domestic travel peaks and prices rise.' });
+            // (v4) Walk the trip's actual dates instead of testing each window
+            // against the year boundary by hand — the old form silently never
+            // matched New Year, whose window straddles 31 December.
+            const cal = calendarInRange(s, e);
+            const hitWindows = {};
+            cal.forEach(function (c) { if (c.crowd) hitWindows[c.crowd.key] = c.crowd.en; });
+            if (hitWindows['golden-week']) out.push({ level: 'info', message: 'TREK × Japan: your dates hit Golden Week — book transport & lodging early, expect crowds.' });
+            if (hitWindows['new-year']) out.push({ level: 'info', message: 'TREK × Japan: New Year (o-shogatsu) — many shops and sights close; plan around it.' });
+            if (hitWindows['obon']) out.push({ level: 'info', message: 'TREK × Japan: Obon week — domestic travel peaks and prices rise.' });
+            const holidays = cal.filter(function (c) { return c.holiday && !c.crowd; });
+            if (holidays.length) out.push({ level: 'info', message: 'TREK × Japan: ' + holidays.length + ' Japanese public holiday' + (holidays.length === 1 ? '' : 's') + ' fall in your trip (' + holidays.slice(0, 3).map(function (c) { return c.holiday.en + ' ' + c.date; }).join(', ') + (holidays.length > 3 ? ', …' : '') + ') — banks and many shops close, sights get busy.' });
             // Prep checklist behind with departure imminent.
             const dStart = daysUntil(s), dEnd = daysUntil(e);
             if (dStart != null && dStart >= 0 && dStart <= 7) {
@@ -455,7 +671,10 @@ const PLUGIN = {
       async getCards(tripIds, ctx) {
         const out = [];
         try {
-          const ids = Array.isArray(tripIds) ? tripIds : [];
+          // Accept a scalar too: every other provider hook takes a single id, and
+          // an empty array here would fail silently (hooks are fail-safe on throw,
+          // so a wrong assumption shows up as "the badge just never appears").
+          const ids = Array.isArray(tripIds) ? tripIds : (tripIds != null ? [tripIds] : []);
           for (const rawId of ids) {
             const id = toNum(rawId, null); if (id == null) continue;
             const tc = await ctx.db.query('SELECT start, end FROM trip_cache WHERE trip_id = ?', id);
@@ -578,7 +797,7 @@ const PLUGIN = {
     // Live activity feed (fed by the events subscription)
     { method: 'GET', path: '/activity', auth: true, async handler(req, ctx) {
       const { tripId } = await requireTrip(req, ctx);
-      const rows = await ctx.db.query('SELECT event, at FROM activity WHERE trip_id = ? ORDER BY id DESC LIMIT 30', tripId);
+      const rows = await ctx.db.query('SELECT event, entity, detail, at FROM activity WHERE trip_id = ? ORDER BY id DESC LIMIT 30', tripId);
       const counts = await ctx.db.query('SELECT event, COUNT(*) AS n FROM activity WHERE trip_id = ? GROUP BY event ORDER BY n DESC', tripId);
       return json(200, { recent: rows, counts });
     } },
@@ -678,7 +897,9 @@ const PLUGIN = {
       const amount = Math.round(toNum(body.amount, 0));
       const r = await attempt(() => ctx.costs.create(tripId, { name, total_price: amount, currency: 'JPY' }));
       if (!r.ok) return json(400, { error: r.error });
-      await logActivity(ctx, tripId, 'budget:created');
+      // No manual logActivity here: ctx.costs.create broadcasts budget:created,
+      // which core delivers straight back to our own '*' subscriber. Writing it
+      // by hand as well put two identical rows in the feed for one action.
       return json(200, { item: r.value });
     } },
     { method: 'POST', path: '/costs/update', auth: true, async handler(req, ctx) {
@@ -797,14 +1018,21 @@ const PLUGIN = {
       const enr = function (code) { const p = prefBy[code]; return p ? { pref_name: p.name, region: p.region, pref_jp: p.jp } : {}; };
       const sakura = SAKURA.map(function (s) { return Object.assign({}, s, enr(s.prefecture_code), { in_window: months == null ? false : months.includes(mmToMonth(s.sakura_avg)), koyo_in_window: months == null ? false : months.includes(mmToMonth(s.koyo_avg)) }); });
       const matsuri = MATSURI.map(function (m) { return Object.assign({}, m, enr(m.prefecture_code), { in_window: months == null ? false : months.includes(m.month), nearby: visitedSet.has(m.prefecture_code) }); }).sort(function (a, b) { return (Number(b.in_window) - Number(a.in_window)) || (Number(b.nearby) - Number(a.nearby)) || (a.month - b.month); });
-      return json(200, { sakura, matsuri, trip_months: months, trip: { start: td.start, end: td.end } });
+      // (v4) Day-precise public holidays & nationwide crowd windows inside the
+      // trip, so the closures and sold-out days are visible while planning.
+      const calendar = calendarInRange(td.start, td.end);
+      return json(200, { sakura, matsuri, calendar, trip_months: months, trip: { start: td.start, end: td.end } });
     } },
-    // Current planner places (db:read:trips)
+    // Current planner places AND the day-ordered itinerary (db:read:trips).
+    // getPlaces returns the trip's place POOL (created_at DESC) — it is not the
+    // itinerary and carries no dates — so the days come from getDays.
     { method: 'GET', path: '/itinerary', auth: true, async handler(req, ctx) {
       const { tripId } = await requireTrip(req, ctx);
       const r = await attempt(() => ctx.trips.getPlaces(tripId));
       const places = r.ok ? (r.value || []).map(function (p) { return { id: p.id, name: p.name || p.title || '', notes: p.notes || null }; }) : [];
-      return json(200, { available: r.ok, error: r.ok ? null : r.error, places });
+      const d = await attempt(() => ctx.trips.getDays(tripId));
+      const days = d.ok ? (d.value || []).map(normDay).filter(Boolean).sort(function (a, b) { return String(a.date || '~').localeCompare(String(b.date || '~')); }) : [];
+      return json(200, { available: r.ok, error: r.ok ? null : r.error, places, days, days_available: d.ok });
     } },
     // Add an event/city to the planner: create a place (+ optional day + assignment),
     // tag it via ctx.meta and mirror the note for the place-detail hook.
@@ -827,10 +1055,23 @@ const PLUGIN = {
       // that matches the event's month (so the matsuri lands on the itinerary).
       let dateStr = body.date ? String(body.date) : null;
       if (!dateStr && body.month != null) dateStr = dateForMonth(trip, toNum(body.month, null));
-      let dayId = null, assigned = false;
+      let dayId = null, assigned = false, reusedDay = false;
       if (dateStr && placeId != null) {
-        const dayRes = await attempt(() => ctx.days.create(tripId, { date: dateStr }));
-        if (dayRes.ok && dayRes.value) { dayId = dayRes.value.id; const asg = await attempt(() => ctx.itinerary.assign(tripId, dayId, placeId)); assigned = asg.ok; }
+        const wanted = String(dateStr).slice(0, 10);
+        // Reuse the trip's existing day for this date before creating one.
+        // dateForMonth() deterministically returns the first in-window date for a
+        // matsuri's month, so adding two events from the same month used to create
+        // two separate days on the identical date in the user's real planner.
+        const existing = await attempt(() => ctx.trips.getDays(tripId));
+        if (existing.ok && Array.isArray(existing.value)) {
+          const hit = existing.value.map(normDay).filter(Boolean).find(function (d) { return d.date === wanted; });
+          if (hit) { dayId = hit.id; reusedDay = true; }
+        }
+        if (dayId == null) {
+          const dayRes = await attempt(() => ctx.days.create(tripId, { date: wanted }));
+          if (dayRes.ok && dayRes.value) dayId = dayRes.value.id;
+        }
+        if (dayId != null) { const asg = await attempt(() => ctx.itinerary.assign(tripId, dayId, placeId)); assigned = asg.ok; }
       }
       // Short, distinct note for the place-detail hook (not a copy of the description).
       const hookNote = String(body.hook_note || ('Added from TREK × Japan' + (body.tag ? ' · ' + String(body.tag).slice(0, 40) : ''))).slice(0, 200);
@@ -839,7 +1080,7 @@ const PLUGIN = {
         await attempt(() => ctx.meta.set('place', placeId, 'note', hookNote));
         await ctx.db.exec('INSERT INTO place_notes(place_id, trip_id, note, by_user, at) VALUES(?, ?, ?, ?, ?) ON CONFLICT(place_id) DO UPDATE SET note=excluded.note, by_user=excluded.by_user, at=excluded.at', placeId, tripId, hookNote, userId, nowIso());
       }
-      return json(200, { place: place, day_id: dayId, assigned, located: (blat != null && blng != null) || !!geo });
+      return json(200, { place: place, day_id: dayId, assigned, reused_day: reusedDay, located: (blat != null && blng != null) || !!geo });
     } },
     { method: 'POST', path: '/itinerary/place/update', auth: true, async handler(req, ctx) {
       const body = await readBody(req);
