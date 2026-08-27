@@ -4,5 +4,5 @@
       "source": { "source": "github", "repo": "fbnlrz/trek-plugin-skill" }
     }
   },
-  "enabledPlugins": ["trek-plugin-dev@trek-plugin-skill"]
+  "enabledPlugins": { "trek-plugin-dev@trek-plugin-skill": true }
 }
